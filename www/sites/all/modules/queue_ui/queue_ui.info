@@ -1,0 +1,10 @@
+name = "Queue UI"
+description = "Interface and manager for Drupal queues"
+core = 7.x
+files[] = queue_ui.module
+; Information added by drupal.org packaging script on 2013-10-01
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "queue_ui"
+datestamp = "1380624567"
+

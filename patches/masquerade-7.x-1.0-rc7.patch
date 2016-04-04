@@ -1,0 +1,144 @@
+From e2a4602dcb550483c2e02fe3b234e2079fce184a Mon Sep 17 00:00:00 2001
+From: Carsten Nielsen <carsten@redpill-linpro.com>
+Date: Wed, 30 Mar 2016 12:48:56 +0200
+Subject: [PATCH] Patch masquerade module.
+
+---
+ www/sites/all/modules/masquerade/masquerade.module | 73 ++++++++++++++++++----
+ 1 file changed, 62 insertions(+), 11 deletions(-)
+
+diff --git a/www/sites/all/modules/masquerade/masquerade.module b/www/sites/all/modules/masquerade/masquerade.module
+index 5c7da88..ddc3037 100644
+--- a/www/sites/all/modules/masquerade/masquerade.module
++++ b/www/sites/all/modules/masquerade/masquerade.module
+@@ -296,6 +296,19 @@ function masquerade_admin_settings() {
+     '#maxlength' => NULL,
+   );
+ 
++  $form['masquerade_disable_logout_hooks'] = array(
++    '#type' => 'checkbox',
++    '#title' => t('Disable logout functions'),
++    '#default_value' => variable_get('masquerade_disable_logout_hooks', 0),
++    '#description' => t('In some cases (like having SSO enabled) it is useful to deactivate the logout functions, that are called when switching to another user.'),
++  );
++  $form['masquerade_disable_profile_form'] = array(
++    '#type' => 'checkbox',
++    '#title' => t('Disable masquerade profile-form-element'),
++    '#default_value' => variable_get('masquerade_disable_profile_form', 0),
++    '#description' => t('If you have many users to masquerade as, simple hide this form.'),
++  );
++
+   $form = system_settings_form($form);
+   $form['#validate'][] = 'masquerade_admin_settings_validate';
+   $form['#submit'][] = 'masquerade_admin_settings_submit';
+@@ -412,21 +425,23 @@ function masquerade_user_view($account, $view_mode, $langcode) {
+     'masquerade as user';
+ 
+   global $user;
++  //check if user is allowed to masquerade as this user
++  $uid = user_load_by_name($account->name);
++  if(masquerade_is_mapped_user($uid->uid) === FALSE) {
++     return;
++  }
+ 
+-  // Query allowed uids so the "masquerade as <user>" link can be shown or
+-  // hidden.
+-  $allowed_uids = db_query("SELECT uid_to FROM {masquerade_users} WHERE uid_from = :uid_from", array(':uid_from' => $user->uid))
+-    ->fetchCol();
+-  $can_masquerade_as_user = in_array($account->uid, $allowed_uids) || user_access('masquerade as any user');
+-
+-  if (user_access($perm) && empty($account->masquerading) && $user->uid != $account->uid && $can_masquerade_as_user) {
++  $name = '';
++  if($uid->field_firstname || $uid->field_lastname) $name = implode(' ', array($uid->field_firstname[LANGUAGE_NONE][0]['value'], $uid->field_lastname[LANGUAGE_NONE][0]['value']));  
++  if(!$name) $name = $account->name;
++  if (user_access($perm) && empty($account->masquerading) && $user->uid != $account->uid) {
+     $account->content['masquerade'] = array(
+-      '#markup' => l(t('Masquerade as !user', array('!user' => $account->name)),
++      '#markup' => '<span class="glyphicon glyphicon-eye-open"></span> '.l(t('Masquerade as !user', array('!user' => $name)),
+         'masquerade/switch/' . $account->uid,
+         array('query' => array(
+           'token' => drupal_get_token('masquerade/switch/' . $account->uid)),
+           'destination' => $_GET['q'],
+-          'attributes' => array('class' => array('masquerade-switch')),
++          'attributes' => array('class' => 'masquerade-switch'),
+         )),
+       '#weight' => 10,
+     );
+@@ -437,6 +452,9 @@ function masquerade_user_view($account, $view_mode, $langcode) {
+  * Implements hook_form_FORM_ID_alter().
+  */
+ function masquerade_form_user_profile_form_alter(&$form, &$form_state, $form_id) {
++  if(variable_get('masquerade_disable_profile_form', 0)) {
++    return;
++  }
+   if ($form['#user_category'] != 'account') {
+     // Do not show this form for different categories.
+     return;
+@@ -800,6 +818,35 @@ function masquerade_switch_user_page($uid) {
+ }
+ 
+ /**
++ * Check is the user is mapped to this user
++ */
++function masquerade_is_mapped_user($uid) {
++  global $user;
++  
++  $rid = array_search('administrator', user_roles(TRUE));
++  if(isset($user->roles[$rid])){
++    $user_to = user_load($uid);
++    $account = user_load($user->uid);
++    $tids = array();
++    foreach($user_to->field_user_school[LANGUAGE_NONE] as $term) {
++      $tids[] = $term['tid'];
++    }
++    foreach($account->field_user_school[LANGUAGE_NONE] as $school) {
++      if(is_array($user_to->field_user_school[LANGUAGE_NONE]) && array_search($school['tid'], $tids) !== FALSE) {
++        return TRUE;
++      }
++    }
++  }
++  $uids = db_query("SELECT uid_to FROM {masquerade_users} WHERE uid_from = :uid_from", array(':uid_from' => $user->uid))
++    ->fetchCol();
++  if(in_array($uid, $uids)) {
++    return TRUE;
++  }
++
++  return FALSE;
++}
++
++/**
+  * Allows a user with the right permissions to become the selected user.
+  *
+  * @param $uid
+@@ -823,6 +870,10 @@ function masquerade_switch_user($uid) {
+     'masquerade as admin' :
+     'masquerade as user';
+ 
++  if(masquerade_is_mapped_user($uid) === FALSE) {
++    return FALSE;
++  }
++
+   // Check to see if we need admin permission.
+   $results = db_query_range('SELECT 1 FROM {masquerade_users} WHERE uid_from = :uid_from AND uid_to = :uid_to', 0, 1, array(
+     ':uid_from' => $user->uid,
+@@ -844,7 +895,7 @@ function masquerade_switch_user($uid) {
+   }
+ 
+   // Call logout hooks when switching from original user.
+-  module_invoke_all('user_logout', $user);
++   if(!variable_get('masquerade_disable_logout_hooks', 0)) module_invoke_all('user_logout', $user);
+   drupal_session_regenerate();
+ 
+   $query = db_insert('masquerade');
+@@ -904,7 +955,7 @@ function masquerade_switch_back() {
+   $oldname = ($user->uid == 0 ? variable_get('anonymous', t('Anonymous')) : $user->name);
+ 
+   // Call logout hooks when switching from masquerading user.
+-  module_invoke_all('user_logout', $user);
++  if(!variable_get('masquerade_disable_logout_hooks', 0)) module_invoke_all('user_logout', $user);
+   drupal_session_regenerate();
+ 
+   $user = user_load($uid);
+-- 
+2.7.4
+

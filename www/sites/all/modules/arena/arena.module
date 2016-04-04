@@ -1,0 +1,1631 @@
+<?php
+
+/**
+ * @file
+ * Defines base features for the Alingsås Intranet project.
+ */
+
+if(!defined('ARENA_ROLE_STUDENT')) define('ARENA_ROLE_STUDENT', 8);
+if(!defined('ARENA_ROLE_TEACHER')) define('ARENA_ROLE_TEACHER', 10);
+if(!defined('ARENA_ROLE_ADMINISTRATOR')) define('ARENA_ROLE_ADMINISTRATOR', 6);
+if(!defined('ARENA_ROLE_SUPERADMINISTRATOR')) define('ARENA_ROLE_SUPERADMINISTRATOR', 11);
+if(!defined('ARENA_ROLE_SCHOOLADMINISTRATOR')) define('ARENA_ROLE_SCHOOLADMINISTRATOR', 12);
+if(!defined('ARENA_ROLE_ADMINPERSONAL')) define('ARENA_ROLE_ADMINPERSONAL', 13);
+
+/**
+ * Implements hook_entity_info_alter().
+ */
+function alingsasintra_entity_info_alter(&$entity_info) {
+  $entity_info['node']['view modes']['block_teaser'] = array(
+    'label' => t('Block teaser'),
+    'custom settings' => TRUE,
+  );
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function arena_views_api() {
+  return array('api' => 3.0);
+}
+
+/**
+ * Implements hook_views_default_views().
+ */
+function arena_views_default_views() {
+  include('arena.views.inc');
+  return $views;
+}
+
+/**
+ * Implements hook_permission()
+ */
+
+function arena_permission() {
+  $permission = array();
+  $permission['arena view classmembers'] = array(
+    'title' => t('View classmembers'),
+    'description' => t('View the list of classmembers.'),
+  );
+  $permission['arena view userprofiles'] = array(
+    'title' => t('View userprofiles'),
+    'description' => t('View the userprofiles.'),
+  );
+  $permission['arena masquerade as classmembers'] = array(
+    'title' => t('Login as classmembers'),
+    'description' => t('Change the login to classmembers.'),
+  );
+  $permission['arena masquerade as schoolmembers'] = array(
+    'title' => t('Login as schoolmembers'),
+    'description' => t('Change login to schoolmembers.'),
+  );
+  $permission['arena masquerade as all users'] = array(
+    'title' => t('Login as all users'),
+    'description' => t('Change login to all members.'),
+    'restrict access' => TRUE,
+  );
+  $permission['arena administer pages as block'] = array(
+    'title' => t('Switch blocks to page'),
+    'description' => t('Administer the show-page-as-block-settings.'),
+  );
+  $permission['arena join classes automatically'] = array(
+    'title' => t('Join classes automatically on save'),
+    'description' => t("Joins user to all classes of the schools he's a member of."),
+  );
+  return($permission);
+}
+
+/**
+  * Implements hook_menu().
+  */
+function arena_menu() {
+  $items['news/get/%/%'] = array(
+      'page callback' => '_arena_ajax_get_news',
+      'page arguments' => array(2,3),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['user/edit-contact'] = array(
+      'page callback' => 'drupal_get_form',
+      'page arguments' => array('arena_usercontact_form'),
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['status/%'] = array(
+      'page callback' => '_arena_status',
+      'page arguments' => array(1),
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['news/mynews'] = array(
+      'page callback' => '_arena_news_mynews',
+      'page arguments' => array(),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['news/publicnews'] = array(
+      'page callback' => '_arena_news_publicnews',
+      'page arguments' => array(),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['news/byterm/%'] = array(
+      'page callback' => '_arena_news_byterm',
+      'page arguments' => array(2),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['min-klass'] = array(
+      'page callback' => '_arena_users_class',
+      'page arguments' => array(),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Show users ordered by class
+ */
+function _arena_users_class() {
+  global $user;
+  $account = user_load($user->uid);
+  $terms = array();
+  if(count($account->field_user_class[LANGUAGE_NONE]) > 0) {
+    foreach($account->field_user_class[LANGUAGE_NONE] as $term) {
+      $terms[] = $term['tid'];
+    }
+  }
+  if(user_access('arena view classmembers')) {
+    if($terms) {
+      $query = new EntityFieldQuery;
+      $query->entityCondition('entity_type', 'user')
+            ->fieldCondition('field_user_class', 'tid', $terms, 'IN')
+            ->fieldOrderBy('field_firstname', 'value')
+            ->fieldOrderBy('field_lastname', 'value');
+
+      $result = $query->execute();
+    }
+
+    $output = '<h1>Mina grupper</h1> <div class="panel-group" id="class-accordion" role="tablist" aria-multiselectable="true">';
+    $users = user_load_multiple(array_keys($result['user']));
+    $classes = array();
+    $teachers = array();
+    foreach($users as $class_user) {
+      foreach($class_user->field_user_class[LANGUAGE_NONE] as $class) {
+        if(array_key_exists(ARENA_ROLE_TEACHER, $class_user->roles)) {
+          $teachers[$class['tid']][] = '<li>' . theme('username', array('account' => $class_user)) . ' (Lärare)</li>';
+        }
+        else {
+          $classes[$class['tid']][] = '<li>' . theme('username', array('account' => $class_user)) . '</li>';
+        }
+      }
+    }
+
+    $list = array();
+    foreach($account->field_user_class[LANGUAGE_NONE] as $class) {
+      if(count($classes[$class['tid']]) || count($teachers[$class['tid']])) {
+        $term = taxonomy_term_load($class['tid']);
+        $list[$term->name]= '<div class="panel panel-default"><div class="panel-heading" role="tab" id="headingterm'.$class['tid'].'"><h2 class="panel-title"><a role="button" data-toggle="collapse" data-parent="#class-accordion" href="#term'.$class['tid'].'" aria-expanded="false" aria-controls="term'.$class['tid'].'">'.$term->name.'</h2></div><div id="term'.$class['tid'].'" class="panel-collapse collapse" role="tabpanel" aria-labelledby="headingterm'.$class['tid'].'"><div class="panel-body">';
+        $list[$term->name] .= '<ul>'.implode('', $teachers[$class['tid']]).'</ul><ul>'.implode('', $classes[$class['tid']]).'</ul></div></div></div>';
+      }
+    }
+    ksort($list);
+    $output .= implode('', $list);
+    $output .= '</div>';
+  }
+  else{
+    $output = '<h1>Mina grupper</h1><uli class="no-list">';
+    $list = array();
+    foreach($account->field_user_class[LANGUAGE_NONE] as $class) {
+      $term = taxonomy_term_load($class['tid']);
+      $list[$term->name] = '<li><a href="/news/byterm/'.$term->tid.'">'.$term->name.'</a></li>';
+    }
+    ksort($list);
+    $output .= implode('', $list);
+    $output .= '</ul>';
+  }
+
+  drupal_set_title('Mina grupper');
+  
+  return array('#markup' => $output);
+}
+
+/**
+ * Get personalized Newsfeed
+ */
+function _arena_news_mynews() {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $items = _arena_news_query('mynews', $user, 30, $page);
+  drupal_set_title('Mina nyheter');
+  $output = '<div class="m news-listing company-news">';
+  $pager_items = 5;
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="cf">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+    if($items['count'] > 30) {
+      $output .= _arena_pager($items['count'], $page, $pager_items, '/news/mynews?');
+    }
+  }
+  else {
+    $output .= '<p>Ingen nyheter hittades.</p><br/>';
+  }
+  $output .= '</div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * Get public Newsfeed
+ */
+function _arena_news_publicnews() {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $items = _arena_news_query('publicnews', $user, 30, $page);
+  drupal_set_title('Alla nyheter');
+  $output = '<div class="m news-listing company-news">';
+  $pager_items = 5;
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="cf">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+    if($items['count'] > 30) {
+      $output .= _arena_pager($items['count'], $page, $pager_items, '/news/mynews?');
+    }
+  }
+  else {
+    $output .= '<p>Ingen nyheter hittades.</p><br/>';
+  }
+  $output .= '</div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * Get news by group or term
+ * @param int $tid ID of the taxonomy term 
+ * @return array
+ */
+function _arena_news_byterm($tid) {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $term = taxonomy_term_load($tid);
+  $items = _arena_news_query('byterm', $user, 30, $page, $term);
+  drupal_set_title('Nyheter för '.$term->name);
+  $output = '<h1>Nyheter för '.$term->name.'</h1><div class="m news-listing company-news">';
+  $pager_items = 5;
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="cf">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+    if($items['count'] > 30) {
+      $output .= _arena_pager($items['count'], $page, $pager_items, '/news/byterm/'.$term->tid.'?');
+    }
+  }
+  else {
+    $output .= '<p>Ingen nyheter hittades.</p><br/>';
+  }
+  $output .= '</div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * get actual news bey ajax-request
+ * @param string $type type of the request
+ * @param int $page page number to return, default 0
+ */
+function _arena_ajax_get_news($type, $page=0) {
+  $content = '';
+  $count = 0;
+  if($type == 'mynews') {
+    global $user;
+    $items = _arena_news_query('mynews', $user, 10, $page);
+    if(count($items['items'])) {
+      $count = $items['count'];
+      $nodes = node_load_multiple($items['items']);
+    }
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $content .= '<li class="news-item">' . render($content_array) . '</li>';
+    }
+  }
+  elseif($type == 'mynews_teacher') {
+    global $user;
+    $items = _arena_news_query('mynews_teacher', $user, 10, $page);
+    if(count($items['items'])) {
+      $count = $items['count'];
+      $nodes = node_load_multiple($items['items']);
+    }
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $content .= '<li class="news-item">' . render($content_array) . '</li>';
+    }
+  }
+  else {
+    global $user;
+    $items = _arena_news_query('publicnews', $user, 10, $page);
+    if(count($items['items'])) {
+      $count = $items['count'];
+      $nodes = node_load_multiple($items['items']);
+    }
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $content .= '<li class="news-item">' . render($content_array) . '</li>';
+    }
+  }
+  drupal_json_output(array(
+      'success' => 'true',
+      'total_rows' => $count,
+      'content' => $content));
+}
+
+/**
+ * Implements hook_views_pre_execute().
+ * filter views output by schools or classes
+ */
+function arena_views_pre_view(&$view, &$display_id, &$args){
+  switch($view->name) {
+    case 'users_filtered_school':
+      global $user;
+      $account = user_load($user->uid);
+      $values = array();
+      foreach($account->field_user_school[LANGUAGE_NONE] as $item) $values[] = $item['tid'];
+      $view->args = array(implode('+', $values));
+      break;
+
+    case 'users_filtered_class':
+      global $user;
+      $account = user_load($user->uid);
+      $values = array();
+      foreach($account->field_user_class[LANGUAGE_NONE] as $item) $values[] = $item['tid'];
+      $view->args = array(implode('+', $values));
+      break;
+
+  }
+}
+
+/**
+ * Get news with different filters
+ * @param string $type Type of the request
+ * @param object $user Drupal user object
+ * @param int $show optional Number of records per page, default 30
+ * @param int $page optional Page number to return, default 0
+ * @param object $term optional Drupal term object
+ * @return array
+ */
+function _arena_news_query($type, $user, $show=30, $page=0, $term=false) {
+  $user_data = user_load($user->uid);
+  $access_keys = unserialize($user_data->field_access_keys[LANGUAGE_NONE][0]['value']);
+  $items = array();
+  $count = 0;
+  $start = $page ? $page*$show : 0;
+  if($type == 'mynews') {
+    $result = false;
+    if(count($access_keys)) {
+      $start = $page ? $page*$show : 0;
+      $date = gmdate('Y-m-d H:i:s');
+      //basic stuff
+      $query = "SELECT DISTINCT node.nid, field_data_field_publishdate.field_publishdate_value FROM node
+      LEFT JOIN arena_access_keys ON node.nid = arena_access_keys.nid
+      LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+      LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+      WHERE node.type='news'
+      AND node.status=1
+      AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+      AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+      AND (node.promote=0 
+        OR (node.promote=1 
+          AND arena_access_keys.keystring IN ('".join("','", $access_keys)."')))";
+      $result = db_query($query);
+      $count = $result->rowCount();
+      if($count > 0) {
+        $result = db_query($query." ORDER BY field_data_field_publishdate.field_publishdate_value DESC LIMIT ".$start.",".$show);
+      }
+    }
+    if($result) {
+      $items = $result->fetchCol(0);
+    }
+  }
+  elseif($type == 'mynews_teacher') {
+    $result = false;
+    $access_keys = array();
+    foreach($user_data->field_user_school[LANGUAGE_NONE] as $term) {
+      $access_keys[] = 'o_'.$term['tid'];
+    }
+    foreach($user_data->field_user_class[LANGUAGE_NONE] as $term) {
+      $access_keys[] = 'o_'.$term['tid'];
+    }
+
+    if(count($access_keys)) {
+      $start = $page ? $page*$show : 0;
+      $date = gmdate('Y-m-d H:i:s');
+      //basic stuff
+      $query = "SELECT DISTINCT node.nid, field_data_field_publishdate.field_publishdate_value FROM node
+      LEFT JOIN arena_access_keys ON node.nid = arena_access_keys.nid
+      LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+      LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+      WHERE node.type='news'
+      AND node.status=1
+      AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+      AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+      AND (node.promote=0 
+        OR (node.promote=1 
+          AND arena_access_keys.keystring IN ('".join("','", $access_keys)."')))";
+      $result = db_query($query);
+      $count = $result->rowCount();
+      if($count > 0) {
+        $result = db_query($query." ORDER BY field_data_field_publishdate.field_publishdate_value DESC LIMIT ".$start.",".$show);
+      }
+    }
+    if($result) {
+      $items = $result->fetchCol(0);
+    }
+  }
+ elseif($type == 'byterm') {
+    $result = false;
+    if($term) {
+      $start = $page ? $page*$show : 0;
+      $date = gmdate('Y-m-d H:i:s');
+      //basic stuff
+      $query = "SELECT DISTINCT node.nid, field_data_field_publishdate.field_publishdate_value FROM node
+      LEFT JOIN taxonomy_index ON node.nid = taxonomy_index.nid
+      LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+      LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+      WHERE node.type='news'
+      AND node.status=1
+      AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+      AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+      AND node.promote=1
+      AND taxonomy_index.tid=".$term->tid;
+      $result = db_query($query);
+      $count = $result->rowCount();
+      if($count > 0) {
+        $result = db_query($query." ORDER BY field_data_field_publishdate.field_publishdate_value DESC LIMIT ".$start.",".$show);
+      }
+    }
+    if($result) {
+      $items = $result->fetchCol(0);
+    }
+  }
+  else {
+    $result = false;
+    $date = gmdate('Y-m-d H:i:s');
+    //basic stuff
+    $query = "SELECT DISTINCT node.nid, field_data_field_publishdate.field_publishdate_value FROM node
+    LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+    LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+    WHERE node.type='news'
+    AND node.status=1
+    AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+    AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+    AND node.promote=0";
+    $result = db_query($query);
+    $count = $result->rowCount();
+    if($count > 0) {
+      $result = db_query($query." ORDER BY field_data_field_publishdate.field_publishdate_value DESC LIMIT ".$start.",".$show);
+    }
+    if($result) {
+      $items = $result->fetchCol(0);
+    }
+  }
+  return array('count' => $count, 'items' => $items);
+}
+
+/**
+ * Return message for error pages
+ * @param integer $status Http status code
+ * @return array
+ */
+function _arena_status($status) {
+  if($status == 403) {
+    drupal_set_title('Du har inte behörighet till denna sida.');
+  }
+  else {
+    drupal_set_title('Sidan hittades inte.');
+  }
+  return array('#markup' => '');
+}
+
+/**
+ * Implements hook_menu_alter()
+ * @param array $items Drupal menu items
+ */
+function arena_menu_alter(&$items) {
+  $items['user/%user/edit']['access callback'] = 'arena_edit_access';
+}
+
+/**
+ * Access check for user-administration
+ * @param object $account Drupal account object
+ * @return bool 
+ */
+function arena_edit_access($account) {
+  return user_access('administer users') && $account->uid > 0;
+}
+
+/**
+ * Pager helper function for list outputs
+ * @param bool|int $all Set to FALSE if total count is unknown
+ * @param int $page optional Set actual page number
+ * @param int $show optional Set number of items to show per page
+ * @param string $url Set url of the paginated output-page
+ * @return string The pager html
+ */
+function _arena_pager($all, $page = 0, $show = 30, $url) {
+  $pager = '';
+  $pager_items = 5;
+  $start = 0;
+  $items = array();
+  //special case where the total count is unknown.
+  if($all === false) {
+    if($page > 0) {
+      $items[] = '<li class="pager-first first"><a title="Gå till första sidan" href="'.$url.'">« första</a></li>';
+      $items[] = '<li class="pager-previous"><a title="Gå till föregående sida" href="'.$url.'&page='.($page - 1).'">‹ föregående</a></li>';
+      for($i=$pager_items-1; $i > 0; $i--) {
+        $attr = array();
+        if($page-$i >= 0) {
+          $items[] = '<li class="'.join(' ',$attr).' pager-item"><a title="Gå till sida'.($page-$i+1).'" href="'.$url.'&page='.($page-$i).'">'.($page-$i+1).'</a></li>';
+        }
+      }
+    }
+    else {
+      $attr[] = 'pager-first';
+    }
+    $items[] = '<li class="'.join(' ',$attr).' pager-current pager-item"><a title="Gå till sida'.($page+1).'" href="'.$url.'&page='.$page.'">'.($page+1).'</a></li>';
+    $items[] = '<li class="pager-next"><a title="Gå till nästa sida" href="'.$url.'&page='.($page+1).'">nästa ›</a></li>';
+  }
+  elseif($all > $show) {
+    $pages = ceil($all/$show)-1;
+    $end = $pages;
+    if($pages > $pager_items) {
+      if($page > ($pager_items/2)) {
+        $start = $page-2;
+      }
+      if(($page+2) < $pages) {
+        $end = $start+4;
+      }
+      else {
+        $start = $pages-4;
+      }
+    }
+    if($page > 0) {
+      $items[] = '<li class="pager-first first"><a title="Gå till första sidan" href="'.$url.'">« första</a></li>';
+      $items[] = '<li class="pager-previous"><a title="Gå till föregående sida" href="'.$url.'&page='.($page - 1).'">‹ föregående</a></li>';
+    }
+    for($i=$start; $i<=$end; $i++) {
+      $attr = array();
+      if($i == $page) {
+        $attr[] = 'pager-current';
+      }
+      if(!count($items)) {
+        $attr[] = 'pager-first';
+      }
+      $items[] = '<li class="'.join(' ',$attr).' pager-item"><a title="Gå till sida'.($i+1).'" href="'.$url.'&page='.$i.'">'.($i+1).'</a></li>';
+    }
+    if($page < $pages) {
+      $items[] = '<li class="pager-next"><a title="Gå till nästa sida" href="'.$url.'&page='.($page+1).'">nästa ›</a></li>';
+      $items[] = '<li class="pager-last last"><a title="Gå till sista sidan" href="'.$url.'&page='.$pages.'">sista »</a></li>';
+    }
+  }
+  if(count($items)) {
+    $entries = join('', $items);
+    $pager = <<<EOF
+    <div class="paging cf">
+      <h2 class="element-invisible">Sidor</h2>
+      <div class="item-list">
+        <ul class="pager">
+          {$entries}
+        </ul>
+      </div>
+    </div>
+EOF;
+  }
+  return $pager;
+
+}
+
+/**
+ * Implements hook_user_presave().
+ * add default role publicist
+ */
+function arena_user_presave(&$edit, $account, $category) {
+  $user = FALSE; 
+  //set user to actual, edited or masqueraded user
+  if($account->name) $user = user_load_by_name($account->name);
+
+  $admin = FALSE;
+  if($user && (array_key_exists(ARENA_ROLE_ADMINISTRATOR, $user->roles) || array_key_exists(ARENA_ROLE_SUPERADMINISTRATOR, $user->roles) || array_key_exists(ARENA_ROLE_SCHOOLADMINISTRATOR, $user->roles))) {
+    $admin = TRUE;
+  }
+
+
+  //copy existing roles if the roles have not been changed
+  if(!isset($edit['roles']) && isset($user->roles)) {
+    $edit['roles'] = array();
+    foreach($user->roles as $key=>$value) {
+      $edit['roles'][$key] = $key;
+    }
+  }
+
+  //Add groups to user
+  $org = array();
+  $keys = array();
+  $schools = array();
+  $classes = array();
+
+  //add manual schools to org
+  if(isset($edit['field_user_school'])) {
+    foreach($edit['field_user_school'][LANGUAGE_NONE] as $term) {
+      $org[] = $term['tid'];
+      $schools[$term['tid']] = array('tid' => $term['tid']);
+    }
+  }
+  //add all classes if user is schooladmin
+  if(user_access('arena join classes automatically', $account) || !empty($edit['roles'][ARENA_ROLE_SCHOOLADMINISTRATOR]) || !empty($edit['roles'][ARENA_ROLE_ADMINPERSONAL])) {
+    $voc = taxonomy_vocabulary_machine_name_load('organizational_structure');
+    $groups = isset($edit['field_user_school'][LANGUAGE_NONE]) ? $edit['field_user_school'][LANGUAGE_NONE] : $user->field_user_school[LANGUAGE_NONE];
+    foreach($groups as $term) {
+      $childs = taxonomy_get_tree($voc->vid, $term['tid']);
+      foreach($childs as $child) {
+        $org[] = $child->tid;
+        $classes[$child->tid] = array('tid' => $child->tid);
+      }
+    }
+    //remove all other classes
+    $edit['field_user_class'][LANGUAGE_NONE] = array();
+  }
+
+  //add manual classes to org
+  if(isset($edit['field_user_class'])) {
+    foreach($edit['field_user_class'][LANGUAGE_NONE] as $term) {
+      $org[] = $term['tid'];
+      $classes[$term['tid']] = array('tid' => $term['tid']);
+    }
+  }
+
+  if(count($org)) {
+    foreach($org as $key=>$value) {
+      if($key != $value) {
+        $org[$value] = $value;
+        unset($org[$key]);
+      }
+    }
+    
+    $terms = taxonomy_term_load_multiple($org);
+    $org = array();
+    foreach($terms as $term) {
+      $org[$term->tid] = array('tid' => $term->tid);
+      $keys['o_'.$term->tid] = 1;
+    }
+  }
+
+  $edit['field_organizational_structure'][LANGUAGE_NONE] = $org;
+  $edit['field_user_school'][LANGUAGE_NONE] = $schools;
+  $edit['field_user_class'][LANGUAGE_NONE] = $classes;
+  $edit['field_access_keys'][LANGUAGE_NONE][0]['value'] = serialize(array_keys($keys));
+
+  /* Add mail to user-profile. */
+  if(!isset($edit['field_user_email'][LANGUAGE_NONE][0]['value']) || !$edit['field_user_email'][LANGUAGE_NONE][0]['value']){
+    unset($edit['field_user_email']);
+    $edit['mail'] = $edit['name'].'@alingsas.se';
+  }
+  else {
+    $edit['mail'] = $edit['field_user_email'][LANGUAGE_NONE][0]['value'];
+  }
+}
+
+/**
+ * Implements hook_user_insert()
+ */
+function arena_user_insert(&$edit, $account, $category) {
+  if($account->name) {
+    _arena_update_masquerade_users($account);
+  } 
+}
+
+/**
+ * Implements hook_user_update()
+ */
+function arena_user_update(&$edit, $account, $category) {
+  if($account->name) {
+    _arena_update_masquerade_users($account);
+  }
+}
+
+/**
+ * Update the masquerade users field if user changes
+ * @param object $account Drupal account object
+ */
+function _arena_update_masquerade_users($account) {
+  if(user_access('arena masquerade as all users', $account)) {
+    //this is a admin
+    $result = db_query('SELECT DISTINCT uid FROM {users_roles}');
+    $delete = db_query('DELETE FROM {masquerade_users} WHERE uid_from = :uid', array(':uid' => $account->uid));
+    $items = $result->fetchCol(0);
+    if(count($items)) {
+      $query = db_insert('masquerade_users')->fields(array('uid_from', 'uid_to'));
+      foreach($items as $uid) {
+        if($account->uid != $uid) $query->values(array('uid_from' => $account->uid, 'uid_to' => $uid));
+      }
+      $insert = $query->execute();
+    }
+  }
+  elseif(user_access('arena masquerade as schoolmembers', $account)) {
+    //this is a schooladmin
+    $tids = array(); $uids = array(); $result = false;
+    foreach($account->field_user_school[LANGUAGE_NONE] as $school) {
+      $tids[] = $school['tid'];
+    }
+    if(count($tids)) {
+      $query = new EntityFieldQuery();
+      $query->entityCondition('entity_type', 'user')
+            ->fieldCondition('field_user_school', 'tid', array($tids), 'IN');
+      $result = $query->execute();
+    }
+    if($result){
+      $uids = array_keys($result['user']);
+      if(($key = array_search($account->uid, $uids)) !== false) {
+          unset($uids[$key]);
+      }
+      if(count($uids)) {
+        $result = db_query('SELECT DISTINCT uid FROM {users_roles} WHERE (rid = :rid1 OR rid = :rid2) AND uid IN (:uids)', array(':rid1' => ARENA_ROLE_STUDENT, ':rid2' => ARENA_ROLE_TEACHER, ':uids' => $uids));
+        $delete = db_query('DELETE FROM {masquerade_users} WHERE uid_from = :uid', array(':uid' => $account->uid));
+        $items = $result->fetchCol(0);
+        if(count($items)) {
+          $query = db_insert('masquerade_users')->fields(array('uid_from', 'uid_to'));
+          foreach($items as $uid) {
+            if($account->uid != $uid) $query->values(array('uid_from' => $account->uid, 'uid_to' => $uid));
+          }
+          $insert = $query->execute();
+        }
+      }
+    }
+  }
+  elseif(user_access('arena masquerade as classmembers', $account)) {
+    //this is a teacher
+    $tids = array(); $uids = array(); $result = false;
+    foreach($account->field_user_class[LANGUAGE_NONE] as $class) {
+      $tids[] = $class['tid'];
+    }
+    if(count($tids)) {
+      $query = new EntityFieldQuery();
+      $query->entityCondition('entity_type', 'user')
+            ->fieldCondition('field_user_class', 'tid', array($tids), 'IN');
+      $result = $query->execute();
+    }
+    if($result){
+      $uids = array_keys($result['user']);
+      if(($key = array_search($account->uid, $uids)) !== false) {
+          unset($uids[$key]);
+      }
+      if(count($uids)) {
+        $result = db_query('SELECT DISTINCT uid FROM {users_roles} WHERE rid = :rid and uid IN (:uids)', array(':rid' => ARENA_ROLE_STUDENT, ':uids' => $uids));
+        $delete = db_query('DELETE FROM {masquerade_users} WHERE uid_from = :uid', array(':uid' => $account->uid));
+        $items = $result->fetchCol(0);
+        if(count($items)) {
+          $query = db_insert('masquerade_users')->fields(array('uid_from', 'uid_to'));
+          foreach($items as $uid) {
+            if($account->uid != $uid) $query->values(array('uid_from' => $account->uid, 'uid_to' => $uid));
+          }
+          $insert = $query->execute();
+        }
+      }
+    }
+  }
+
+}
+
+/**
+ * Implements hook_user_login()
+ */
+function arena_user_login(&$edit, $account) {
+  _arena_update_masquerade_users($account);
+  //See arena_user_presave
+}
+
+/**
+ * Implementation of hook_form_validate().
+ */
+function arena_node_validate($node, $form, &$form_state) {
+  if(isset($form['#form_id']) && $form['#form_id'] == 'news_node_form') {
+    if($form_state['values']['promote'] == 0) {
+      $form_state['values']['field_organizational_structure'][LANGUAGE_NONE] = array();
+      $form_state['values']['field_target_groups'][LANGUAGE_NONE] = array();
+    }
+    elseif($form_state['values']['promote'] && count($form_state['values']['field_organizational_structure'][LANGUAGE_NONE]) <= 0) {
+      form_set_error('field_organizational_structure', t('School/class: You have to select at least one item from the list.'));
+    }
+    elseif($form_state['input']['edit-use_target_groups'] && count($form_state['values']['field_target_groups'][LANGUAGE_NONE]) <= 0) {
+      form_set_error('field_target_groups', t('Targetgroup: You have to select at least one item from the list.'));
+    }
+  }
+  elseif(isset($form['#form_id']) && $form['#form_id'] == 'page_node_form') {
+    if($form_state['submit_handlers'][0] != 'node_form_delete_submit' && $form_state['values']['fmenu']['menu_name'] && $form_state['values']['fmenu']['link_title']=='') {
+      form_set_error('fmenu', t('You have to provide a name and position for the menu-element.'));
+    }
+  }
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function arena_form_alter(&$form, &$form_state, $form_id) {
+  global $user;
+  //remove all vertical tabs from node forms.
+  if (strstr($form_id, '_node_form') == '_node_form') {
+    array_walk_recursive($form, '_arena_replace_vertical_tabs_to_fieldsets');
+  }
+
+  //Change title of forms with after_build
+  $form['#after_build'][] = 'arena_after_build';
+
+  //remove unneccesary fields
+  if(isset($form['field_contact_user']))  unset($form['field_contact_user']);
+  if(isset($form['field_contact_name']))unset($form['field_contact_name']);
+  if(isset($form['field_contact_email']))unset($form['field_contact_email']);
+  if(isset($form['field_url'])) unset($form['field_url']);
+  if(isset($form['field_general_information'])) unset($form['field_general_information']);
+
+  //customize news_node_form
+  switch($form_id) {
+    case 'views_exposed_form':
+      if($form['#id'] == 'views-exposed-form-my-content-page') {
+        foreach($form['type']['#options'] as $key => $value) {
+          if($key != 'All' && user_access('edit own '.$key.' content') == FALSE){
+            unset($form['type']['#options'][$key]);
+          }
+        }
+      }
+      break;
+
+    case 'page_node_form':
+      if(isset($form['field_content_as_block']) && !user_access('arena administer pages as block')) {
+        unset($form['field_content_as_block']);
+      }
+      if($form['#action'] == '/node/add/page' && $form_state['submitted'] == FALSE){
+        $form['fmenu']['menu_name']['#default_value'] = 'main-menu';
+        $form['fmenu']['#suffix'] = <<<EOF
+        <script type="text/javascript">jQuery(function(){jQuery('#edit-fmenu-menu-name').change();});</script>
+EOF;
+      };
+      unset($form['options']['#group']);
+      $form['options']['#weight'] = 20;
+      $form['options']['sticky']['#access'] = FALSE;
+      $form['options']['promote']['#access'] = FALSE;
+      unset($form['fmenu']['#group']);
+      $form['fmenu']['#weight'] = 21;
+      $form['fmenu']['#collapsed'] = FALSE;
+      $form['additional_settings']['#title'] = t('Additional settings');
+      $form['additional_settings']['#collapsible'] = TRUE;
+      $form['additional_settings']['#collapsed'] = TRUE;
+      $form['path']['#collapsed'] = TRUE;
+      $form['options']['#collapsed'] = FALSE;
+      if(!isset($form['options']['field_secure_by_group'])) {
+        $form['options']['field_secure_by_group'] = $form['field_secure_by_group'];
+        $form['options']['field_secure_by_group']['#weight'] = 13;
+        unset($form['field_secure_by_group']);
+      }
+      if(!isset($form['options']['field_access_groups'])) {
+        $form['options']['field_access_groups'] = $form['field_access_groups'];
+        $form['options']['field_access_groups']['#weight'] = 14;
+        unset($form['field_access_groups']);
+        $form['options']['field_access_groups']['#suffix'] = <<<EOF
+<script type="text/javascript">
+  jQuery(function(){
+    if(jQuery('#edit-field-secure-by-group-und').prop('checked')){
+      jQuery('#edit-field-access-groups').show();
+      setTimeout(function () {
+        jQuery('#edit-field-access-groups .term-reference-menu .selector ul ul li:first-child span.name').trigger('click');
+      }, 1000);
+    }
+    else {
+      jQuery('#edit-field-access-groups').hide();
+    }
+	  jQuery('#edit-field-secure-by-group-und').click(function() {
+	    if(jQuery('#edit-field-secure-by-group-und').prop('checked')){
+	      jQuery('#edit-field-access-groups').slideDown();
+	    }
+	    else {
+	      jQuery('#edit-field-access-groups').slideUp();
+	    }
+    });
+    jQuery('#page-node-form').submit(function(){
+       if(jQuery('#edit-field-secure-by-group-und').prop('checked') && jQuery('#edit-field-access-groups-und').val().length <= 0){
+         jQuery('#edit-field-access-groups').addClass('tr-error');
+         alert('Um Du begränsa tillgång, måste Du också lägga till minst en grupp.');
+         jQuery('html, body').animate({
+             scrollTop: jQuery("#edit-field-secure-by-group-und").offset().top
+         }, 500);
+         return false;
+       }
+    });
+  });
+</script>
+EOF;
+      }
+      if(!isset($form['options']['field_organizational_structure'])) {
+        //$form['options']['field_organizational_structure'] = $form['field_organizational_structure'];
+        //$form['options']['field_organizational_structure']['#weight'] = 15;
+        unset($form['field_organizational_structure']);
+      }
+      $form['field_teaser'][LANGUAGE_NONE]['#collapsible'] = TRUE;
+      if($form_state['submitted'] == FALSE) {
+        $form['field_teaser'][LANGUAGE_NONE]['#collapsed'] = TRUE;
+      }
+      //$form['#attached']['js'][] = drupal_get_path('module', 'arena') . '/unlimited-field-delete.js';
+
+      break;
+
+    case 'notification_node_form':
+      unset($form['options']['#group']);
+      $form['options']['#weight'] = 20;
+      $form['options']['sticky']['#access'] = FALSE;
+      //$form['field_organizational_structure']['#access'] = FALSE;
+      unset($form['fmenu']);
+      $form['additional_settings']['#title'] = t('Additional settings');
+      $form['additional_settings']['#collapsible'] = TRUE;
+      $form['additional_settings']['#collapsed'] = TRUE;
+      $form['path']['#collapsed'] = TRUE;
+      $form['options']['#collapsed'] = FALSE;
+      $form['options']['promote']['#weight'] = 14;
+      $form['options']['promote']['#title'] = 'Begränsa målgrupp till skola/klass<br/>(klicka ur för att skriva en allmän informationsmeddelande)';
+      if(!isset($form['options']['field_organizational_structure'])) {
+        $form['options']['field_organizational_structure'] = $form['field_organizational_structure'];
+        $form['options']['field_organizational_structure']['#weight'] = 15;
+        unset($form['field_organizational_structure']);
+      }
+
+      if(isset($form['field_publishduration'])) {
+        $form['options']['field_publishduration'] = $form['field_publishduration'];
+        $form['options']['field_publishduration']['#weight'] = 20;
+        unset($form['field_publishduration']);
+      }
+      if(isset($form['field_publishdate'])) {
+        $form['options']['field_publishdate'] = $form['field_publishdate'];
+        $form['options']['field_publishdate']['#weight'] = 20;
+        unset($form['field_publishdate']);
+      }
+      if(isset($form['field_unpublishdate'])) {
+        $form['options']['field_unpublishdate'] = $form['field_unpublishdate'];
+        $form['options']['field_unpublishdate']['#weight'] = 21;
+        unset($form['field_unpublishdate']);
+      }
+
+      break;
+
+    case 'news_node_form':
+      unset($form['options']['#group']);
+      $form['options']['#weight'] = 20;
+      $form['options']['sticky']['#access'] = FALSE;
+      $form['additional_settings']['#title'] = t('Additional settings');
+      $form['additional_settings']['#collapsible'] = TRUE;
+      $form['additional_settings']['#collapsed'] = TRUE;
+      $form['path']['#collapsed'] = TRUE;
+      $form['options']['#collapsed'] = FALSE;
+      $form['options']['status']['#weight'] = 0;
+      $form['options']['promote']['#weight'] = 14;
+      $form['options']['promote']['#title'] = 'Begränsa målgrupp till skola/klass<br/>(klicka ur för att skriva en gemensam nyhet)';
+      unset($form['options']['sticky']);
+
+      if(!isset($form['options']['field_organizational_structure'])) {
+        $form['options']['field_organizational_structure'] = $form['field_organizational_structure'];
+        $form['options']['field_organizational_structure']['#weight'] = 19;
+        $form['options']['field_organizational_structure']['#suffix'] = <<<EOF
+<script type="text/javascript">
+  jQuery(function(){
+    if(jQuery('#edit-promote').prop('checked')){
+      jQuery('#edit-field-organizational-structure').show();
+      setTimeout(function () {
+        jQuery('#edit-field-organizational-structure.term-reference-menu .selector ul ul li:first-child span.name').trigger('click');
+      }, 1000);
+
+      jQuery('#form-item-use-target-groups').show();
+      if(jQuery('#edit-use_target_groups').prop('checked')){
+	      jQuery('#edit-field-target-groups').show();
+	    }
+	    else {
+	      jQuery('#edit-field-target-groups').hide();
+	    }
+    }
+    else {
+      jQuery('#edit-field-organizational-structure').hide();
+      jQuery('#form-item-use-target-groups').hide();
+      jQuery('#edit-field-target-groups').hide();
+    }
+	  jQuery('#edit-promote').click(function() {
+	    if(jQuery('#edit-promote').prop('checked')){
+	      jQuery('#edit-field-organizational-structure').slideDown();
+	      jQuery('#form-item-use-target-groups').slideDown();
+	      if(jQuery('#edit-use_target_groups').prop('checked')){
+	        jQuery('#edit-field-target-groups').slideDown();
+	      }
+	    }
+	    else {
+	      jQuery('#edit-field-organizational-structure').slideUp();
+	      jQuery('#form-item-use-target-groups').slideUp();
+	      jQuery('#edit-field-target-groups').slideUp();
+	    }
+
+    });
+    jQuery('#edit-use_target_groups').click(function() {
+	    if(jQuery('#edit-use_target_groups').prop('checked')){
+	      jQuery('#edit-field-target-groups').slideDown();
+	    }
+	    else {
+	      jQuery('#edit-field-target-groups').slideUp();
+	    }
+    });
+  });
+</script>
+EOF;
+        unset($form['field_organizational_structure']);
+      }
+      if(!isset($form['options']['field_target_groups']) && isset($form['field_target_groups'])) {
+        $form['options']['field_target_groups'] = $form['field_target_groups'];
+        $form['options']['field_target_groups']['#weight'] = 20;
+        $checked = $form['options']['field_target_groups'][LANGUAGE_NONE]['#default_value'] ? 'checked="checked"' : '';
+        $form['options']['field_target_groups']['#prefix'] =<<<EOF
+<div class="form-item form-type-checkbox form-item-use-target-groups" id="form-item-use-target-groups">
+ <input type="checkbox" id="edit-use_target_groups" name="edit-use_target_groups" value="1" class="form-checkbox" {$checked}>  <label class="option" for="edit-use_target_groups">Begränsa målgrupp ännu mer till roll</label>
+</div>
+EOF;
+        unset($form['field_target_groups']);
+      }
+
+      if(isset($form['field_publishdate'])) {
+        $form['options']['field_publishdate'] = $form['field_publishdate'];
+        $form['options']['field_publishdate']['#weight'] = 20;
+        unset($form['field_publishdate']);
+      }
+      if(isset($form['field_unpublishdate'])) {
+        $form['options']['field_unpublishdate'] = $form['field_unpublishdate'];
+        $form['options']['field_unpublishdate']['#weight'] = 21;
+        unset($form['field_unpublishdate']);
+      }
+      break;
+
+    case 'icon_node_form':
+      unset($form['options']['#group']);
+      $form['options']['#weight'] = 20;
+      $form['options']['sticky']['#access'] = FALSE;
+      $form['additional_settings']['#title'] = t('Additional settings');
+      $form['additional_settings']['#collapsible'] = TRUE;
+      $form['additional_settings']['#collapsed'] = TRUE;
+      $form['path']['#collapsed'] = TRUE;
+      $form['options']['#collapsed'] = FALSE;
+      $form['options']['status']['#weight'] = 0;
+      $form['options']['promote']['#weight'] = 14;
+      $form['options']['promote']['#title'] = 'Begränsa målgrupp till skola/klass<br/>(klicka ur för att skapa en gemensam webbresurs)';
+      if(!isset($form['options']['field_organizational_structure'])) {
+        $form['options']['field_organizational_structure'] = $form['field_organizational_structure'];
+        $form['options']['field_organizational_structure']['#weight'] = 19;
+        unset($form['field_organizational_structure']);
+      }
+      break;
+
+    case 'user_profile_form':
+      if(isset($form['field_user_customtags'])){
+        $form['field_user_customtags']['#access'] = FALSE;
+      }
+      if(isset($form['field_organizational_structure'])){
+        $form['field_organizational_structure']['#access'] = FALSE;
+      }
+      if(isset($form['field_target_groups'])){
+        $form['field_target_groups']['#access'] = FALSE;
+      }
+      if(isset($form['field_ldap_grupper'])) {
+        $form['field_ldap_grupper']['#access'] = FALSE;
+      }
+      if(isset($form['field_access_keys'])) {
+        $form['field_access_keys']['#access'] = FALSE;
+      }
+      if(isset($form['field_eduaffiliation'])) {
+        $form['field_eduaffiliation']['#access'] = FALSE;
+      }
+      if(isset($form['masquerade'])){
+        $form['masquerade']['#access'] = FALSE;
+      }
+
+      break;
+
+    case 'user_login':
+        $form['name']['#attributes']['autocapitalize'] = "off";
+        $form['name']['#attributes']['autocorrect'] = "off";
+        $form['pass']['#attributes']['autocapitalize'] = "off";
+        $form['pass']['#attributes']['autocorrect'] = "off";
+      break;
+
+    case 'webform_node_form':
+        //remove comment-options
+        if(isset($form['comment_settings']['#access'])) {
+          unset($form['comment_settings']);
+        }
+        if(isset($form['field_content_as_block']) && !user_access('areana administer pages as block')) {
+          unset($form['field_content_as_block']);
+        }
+
+        //set default menu
+        if($form['#action'] == '/node/add/webform' && $form_state['submitted'] == FALSE){
+          $form['fmenu']['menu_name']['#default_value'] = 'main-menu';
+          $form['fmenu']['#suffix'] = <<<EOF
+        <script type="text/javascript">jQuery(function(){jQuery('#edit-fmenu-menu-name').change();});</script>
+EOF;
+        }
+
+        unset($form['options']['#group']);
+        $form['options']['#weight'] = 20;
+        $form['options']['sticky']['#access'] = FALSE;
+        $form['additional_settings']['#title'] = t('Additional settings');
+        $form['additional_settings']['#collapsible'] = TRUE;
+        $form['additional_settings']['#collapsed'] = TRUE;
+        $form['path']['#collapsed'] = TRUE;
+        $form['options']['#collapsed'] = FALSE;
+        $form['options']['status']['#weight'] = 0;
+        $form['options']['promote']['#weight'] = 14;
+        $form['options']['promote']['#title'] = 'Begränsa målgrupp till skola/klass<br/>(klicka ur för att skapa en gemensam webbresurs)';
+        if(!isset($form['options']['field_organizational_structure'])) {
+          $form['options']['field_organizational_structure'] = $form['field_organizational_structure'];
+          $form['options']['field_organizational_structure']['#weight'] = 19;
+          unset($form['field_organizational_structure']);
+        }
+      break;
+  }
+}
+
+/**
+ * After form build function
+ *
+ * @param  array $form
+ * @param  array &$form_state
+ *
+ * @return array
+ *    Returns array with new js file added.
+ */
+function arena_after_build($form, &$form_state) {
+  $path = drupal_get_path('module', 'arena');
+  drupal_add_js ($path . "/js/admin.js");
+  if (isset($form['#node_edit_form'])) {
+    // We are editing or adding new node.
+    if (!isset($form['#node']->nid) && isset($form['#node'])) {
+      // New node.
+      drupal_set_title(t('Create @contenttype', array('@contenttype' => strtolower(node_type_get_name($form['#node']->type)))));
+    }
+    if (isset($form['#node']->nid)) {
+      // Editing an existing node.
+      drupal_set_title(t('Edit @nodetitle', array('@nodetitle' => $form['#node']->title)));
+    }
+  }
+  return $form;
+}
+
+/**
+ * Disable Vertical Tabs
+ *
+ * @param $item
+ * @param $key
+ */
+function _arena_replace_vertical_tabs_to_fieldsets(&$item, $key) {
+
+  if ($item == 'vertical_tabs' && $key == '#type') {
+    $item = 'fieldset';
+  }
+
+}
+
+/**
+ * Implements hook_block_info()
+ */
+function arena_block_info() {
+  $blocks = array();
+  $blocks['user_info'] = array(
+    'info' => t('Användar info'),
+    'status' => FALSE,
+    'weight' => 0,
+  );
+  $blocks['local_tasks'] = array(
+      'info' => t('Sid aktioner'),
+      'status' => 1,
+      'region' => 'sidebar_third',
+      'weight' => 9,
+      'visibility' => BLOCK_VISIBILITY_LISTED,
+      'pages' => '<front>',
+  );
+  $blocks['news_mynews'] = array(
+      'info' => t('News block with personalized news-feed.'),
+      'status' => FALSE,
+      'weight' => 0,
+  );
+  $blocks['news_mynews_teacher'] = array(
+      'info' => t('News block with personalized news-feed for teachers.'),
+      'status' => FALSE,
+      'weight' => 0,
+  );
+  $blocks['news_publicnews'] = array(
+      'info' => t('News block with public news-feed.'),
+      'status' => FALSE,
+      'weight' => 0,
+  );
+  $blocks['notifications'] = array(
+      'info' => t('Notifications on startpage'),
+      'status' => 1,
+      'region' => 'notification_area',
+      'weight' => 0,
+      'visibility' => BLOCK_VISIBILITY_LISTED,
+      'pages' => '<front>',
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view()
+ */
+function arena_block_view($delta = '') {
+  switch ($delta) {
+    case 'user_info':
+      $block['content'] = _arena_block_userinfo();
+      return $block;
+      break;
+    case 'local_tasks':
+      $block['content'] = _arena_block_localtabs();
+      return $block;
+      break;
+    case 'news_mynews':
+      $block['content'] = _arena_block_news_mynews();
+      return $block;
+      break;
+    case 'news_mynews_teacher':
+      $block['content'] = _arena_block_news_mynews_teacher();
+      return $block;
+      break;
+    case 'news_publicnews':
+      $block['content'] = _arena_block_news_publicnews();
+      return $block;
+      break;
+    case 'notifications':
+      $block['content'] = _arena_block_notifications();
+      return $block;
+      break;
+  }
+}
+
+/**
+ * Show notifications or deliver AJAX response
+ */
+function _arena_block_notifications( $time = FALSE) {
+  $cache = cache_get('arena_notifications_updatetime');
+  if($cache->data && $time !== FALSE && $time >= $cache->data) {
+    print '';
+    drupal_exit();
+  }
+  elseif(!$cache->data) {
+    cache_set('arena_notifications_updatetime', time());
+  }
+  global $user;
+  $user_data = user_load($user->uid);
+  $terms = array();
+  $output = '';
+  $date = date('Y-m-d H:i:s');
+  foreach($user_data->field_organizational_structure['und'] as $term) {
+    $terms[] = $term['tid'];
+  }
+  if(count($terms)) {
+    $result = db_query("SELECT DISTINCT node.nid, field_data_field_notification_type.field_notification_type_value FROM node
+      LEFT JOIN taxonomy_index ON node.nid = taxonomy_index.nid LEFT JOIN field_data_field_notification_type ON node.nid = field_data_field_notification_type.entity_id
+      LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+      LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+      WHERE node.type='notification'
+      AND node.status=1
+      AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+      AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+      AND (taxonomy_index.tid IN (".join(',', $terms).") OR node.promote=0)
+      ORDER BY node.title");
+  }
+  else {
+    $result = db_query("SELECT DISTINCT node.nid, field_data_field_notification_type.field_notification_type_value FROM node
+      LEFT JOIN field_data_field_notification_type ON node.nid = field_data_field_notification_type.entity_id
+      LEFT JOIN field_data_field_publishdate ON node.nid = field_data_field_publishdate.entity_id
+      LEFT JOIN field_data_field_unpublishdate ON node.nid = field_data_field_unpublishdate.entity_id
+      WHERE node.type='notification'
+      AND node.status=1
+      AND field_data_field_publishdate.field_publishdate_value <= '".$date."'
+      AND field_data_field_unpublishdate.field_unpublishdate_value >= '".$date."'
+      AND node.promote=0
+      ORDER BY node.title");
+  }
+  if($result) {
+    $notification = array();
+    foreach(node_load_multiple($result->fetchCol(0)) as $link) {
+      $prefix = $link->field_notification_type[und][0][value] == 1 ? '<span class="glyphicon glyphicon-exclamation-sign" aria-hidden="true"></span><span class="sr-only">Warning:</span> ' : '<span class="glyphicon glyphicon-info-sign" aria-hidden="true"></span><span class="sr-only">Info:</span> ';
+      $notification[$link->field_notification_type[und][0][value]][] = '<li>'.$prefix.'<a href="'.url('node/'.$link->nid).'">'.$link->title.'</a></li>';
+    }
+    if(isset($notification[1]) && count($notification[1])) {
+      $not = join(' ', $notification[1]);
+      $output .= <<<EOL
+    <div class="important-message alert alert-danger"><ul>
+    {$not}
+    </ul></div>
+EOL;
+    }
+    if(isset($notification[0]) && count($notification[0])) {
+      $not = join(' ', $notification[0]);
+      $output .= <<<EOL
+    <div class="info-message alert alert-warning"><ul>
+    {$not}
+    </ul></div>
+EOL;
+    }
+  };
+  if($time > 0) {
+    print($output);
+    drupal_exit();
+  }
+
+  $output = '<div class="notification-content">'. $output.'</div>';
+  $update_time = time();
+  $output .= <<<EOL
+<script type="text/javascript">
+var notification_update_time = {$update_time};
+jQuery(function notification_update (){
+  jQuery.ajax({
+    url: "notification/update/" + notification_update_time,
+    success:function(result){
+      if(result.length > 0) {
+        jQuery("div.notification-content").html(result);
+        notification_update_time = Math.round((new Date).getTime() / 1000);
+      }
+      setTimeout(notification_update, 30000);
+    }
+  });
+});
+</script>
+EOL;
+
+  return $output ? array('#markup' => $output) : FALSE;
+}
+
+/**
+ * Show userinfo with school and class information
+ */
+function _arena_block_userinfo() {
+  global $user;
+  $account = user_load_by_name($user->name);
+  $school = field_view_field('user', $account, 'field_user_school', 'taxonomy_term_reference_plain');
+  if(isset($school['#items']) && count($school['#items']) > 1) {
+    $count = count($school['#items']) -1;
+    $school['#items'] = array($school['#items'][0]);
+    $school[0]['#markup'] .= ', '.$count.' mer...';
+  }
+  $school = render($school);
+  $class_field = field_view_field('user', $account, 'field_user_class', 'taxonomy_term_reference_plain');
+  $class = render($class_field);
+  if(strpos($class, 'odd')) $class = '';
+  $date = format_date(time(), 'short_week');
+  $output = '<div class="pull-right userinfo">'.$account->field_firstname[LANGUAGE_NONE][0]['value'].' '.$account->field_lastname[LANGUAGE_NONE][0]['value'].' '.$school.' '.$class.'<div class="dateweek">'.$date.'</div></div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * Show personalized newsfeed for teachers
+ */
+function _arena_block_news_mynews_teacher() {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $items = _arena_news_query('mynews_teacher', $user, 10, $page);
+  $output = '<div class="news-listing news-slider">';
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="news-item">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+  }
+  if($items['count'] > count($items['items'])) {
+    $output .= '<div class="more-link"><a href="/mina-nyheter"><button class="btn btn-default">Visa fler <span>('.count($items['items']).' av '.$items['count'].')</span></button></a></div>';
+  }
+  $output .= '</div>';
+  $output .= <<<EOL
+<script type="text/javascript">
+jQuery(function() {
+  var mynews = {page:1, rows:0, all:0, prevent:1};
+	mynews.rows = jQuery('div.news-listing > ul > li').size();
+	jQuery('div.news-listing .more-link a').click(function(e){
+		if(mynews.prevent == 1){
+			e.preventDefault();
+			jQuery('div.my-news .more-link button').html('Laddar...');
+			jQuery.getJSON('/news/get/mynews_teacher/' + mynews.page, function(data) {
+				mynews.all = data.total_rows;
+				jQuery('div.news-listing > ul').append(data.content);
+				mynews.rows = jQuery('.news-listing > ul > li').size();
+				mynews.page++;
+				if(mynews.all <= mynews.rows || mynews.page > 2) {
+					//mynews.prevent = 0;
+					jQuery('div.news-listing .more-link button').html('Visa alla <span>(' + mynews.rows + ' av ' + mynews.all + ')</span>').hide();
+				}
+				else {
+					jQuery('div.news-listing .more-link button').html('Ladda fler <span>(' + mynews.rows + ' av ' + mynews.all + ')</span>');
+				}
+			});
+		}
+	});
+});
+</script>
+EOL;
+  return array('#markup' => $output);
+}
+
+/**
+ * Show personalized news-feed for students
+ */
+function _arena_block_news_mynews() {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $items = _arena_news_query('mynews', $user, 10, $page);
+  $output = '<div class="news-listing news-slider">';
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="news-item">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+  }
+  if($items['count'] > count($items['items'])) {
+    $output .= '<div class="more-link"><a href="/mina-nyheter"><button class="btn btn-default">Visa fler <span>('.count($items['items']).' av '.$items['count'].')</span></button></a></div>';
+    $output .=<<<EOL
+<script type="text/javascript">
+jQuery(function() {
+  var mynews = {page:1, rows:0, all:0, prevent:1};
+	mynews.rows = jQuery('div.news-listing > ul > li').size();
+	jQuery('div.news-listing .more-link a').click(function(e){
+		if(mynews.prevent == 1){
+			e.preventDefault();
+			jQuery('div.news-listing .more-link button').html('Laddar...');
+			jQuery.getJSON('/news/get/mynews/' + mynews.page, function(data) {
+				mynews.all = data.total_rows;
+				jQuery('div.news-listing > ul').append(data.content);
+				mynews.rows = jQuery('div.news-listing > ul > li').size();
+				mynews.page++;
+				if(mynews.all <= mynews.rows || mynews.page > 2) {
+					//mynews.prevent = 0;
+					jQuery('div.news-listing .more-link button').html('Visa alla <span>(' + mynews.rows + ' av ' + mynews.all + ')</span>').hide();
+				}
+				else {
+					jQuery('div.news-listing .more-link button').html('Ladda fler <span>(' + mynews.rows + ' av ' + mynews.all + ')</span>');
+				}
+			});
+		}
+	});
+});
+</script>
+EOL;
+  }
+  $output .= '</div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * Show public news-feed
+ */
+function _arena_block_news_publicnews() {
+  global $user;
+  $page = isset($_GET['page']) ? $_GET['page'] : 0;
+  $items = _arena_news_query('publicnews', $user, 10, $page);
+  $output = '<div class="m company-news news-slider"><div class="m-h cf"><h2>Gemensamma Nyheter</h2></div><div class="m-c cf">';
+  if(count($items['items'])) {
+    $output .= '<ul>';
+    $nodes = node_load_multiple($items['items']);
+    foreach($nodes as $node) {
+      $content_array = node_view($node, 'teaser', NULL);
+      $output .= '<li class="cf">' . render($content_array) . '</li>';
+    }
+    $output .= '</ul>';
+  }
+  if($items['count'] > count($items['items'])) {
+    $output .= '<div class="more-link"><a href="/news/publicnews"><button>Visa fler <span>('.count($items['items']).' av '.$items['count'].')</span></button></a></div>';
+    $output .=<<<EOL
+<script type="text/javascript">
+jQuery(function() {
+  var allnews = {page:1, rows:0, all:0, prevent:1};
+	allnews.rows = jQuery('div.company-news div.m-c > ul > li').size();
+	jQuery('div.company-news .more-link a').click(function(e){
+		if(allnews.prevent == 1){
+			e.preventDefault();
+			jQuery('div.company-news .more-link button').html('Laddar...');
+			jQuery.getJSON('/news/get/publicnews/' + allnews.page, function(data) {
+				allnews.all = data.total_rows;
+				jQuery('div.company-news div.m-c > ul').append(data.content);
+				allnews.rows = jQuery('div.company-news div.m-c > ul > li').size();
+				allnews.page++;
+				if(allnews.all <= allnews.rows || allnews.page > 2) {
+					allnews.prevent = 0;
+					jQuery('div.company-news .more-link button').html('Visa alla <span>(' + allnews.rows + ' av ' + allnews.all + ')</span>');
+				}
+				else {
+					jQuery('div.company-news .more-link button').html('Ladda fler <span>(' + allnews.rows + ' av ' + allnews.all + ')</span>');
+				}
+			});
+		}
+	});
+});
+</script>
+EOL;
+  }
+  $output .= '</div></div>';
+  return array('#markup' => $output);
+}
+
+/**
+ * Show localtabs as block
+ */
+function _arena_block_localtabs() {
+  $output = '';
+  $tasks = menu_local_tabs();
+  $menu = '';
+
+  if($tasks['#primary']) {
+    unset($tasks['#primary'][0]);
+  }
+
+  $actions = menu_local_tasks();
+  if($actions['actions']['count']) {
+    foreach($actions['actions']['output'] as $item) {
+      $tasks['#primary'][] = $item;
+    }
+  }
+
+  $item = menu_get_item('node/add/news');
+  if ($item['access']) {
+    $item['title'] = 'Skapa nyhet';
+    $item['weight'] = 20;
+    $tasks['#primary'][] = array(
+        '#theme' => 'menu_local_action',
+        '#link' => $item,
+    );
+  }
+  $item = menu_get_item('node/add/page');
+  if ($item['access']) {
+    $item['title'] = 'Skapa sida';
+    $item['weight'] = 23;
+    $tasks['#primary'][] = array(
+        '#theme' => 'menu_local_action',
+        '#link' => $item,
+    );
+  }
+  $item = menu_get_item('node/add/notification');
+    if ($item['access']) {
+      $item['title'] = 'Skapa informationsmeddelande';
+      $item['weight'] = 25;
+      $tasks['#primary'][] = array(
+          '#theme' => 'menu_local_action',
+          '#link' => $item,
+      );
+    }
+  $item = menu_get_item('node/add/webform');
+  if ($item['access']) {
+    $item['title'] = 'Skapa formulär';
+    $item['weight'] = 26;
+    $tasks['#primary'][] = array(
+        '#theme' => 'menu_local_action',
+        '#link' => $item,
+    );
+  }
+  if($tasks['#primary']) {
+    $menu = render($tasks);
+    $output = <<<EOL
+<div id="edit" class="m toggle-module toggle cf">
+	<div class="m-h cf">
+		<span class="toggle-icon edit"></span>
+		<h2>Publicera innehåll</h2>
+	</div>
+	<div class="m-c cf">
+		<div class="toggle-list">
+			<ul>
+				{$menu}
+			</ul>
+		</div>
+	</div>
+</div>
+EOL;
+  }
+  return array('#markup' => $output);
+}
+
+/**
+ * Replace with &shy;
+ * @param unknown_type $title
+ * @return mixed
+ */
+function arena_soft_hyphen_filter($title) {
+  return str_replace('_', '&shy;', $title);
+}
+
+/**
+ * Implements hook_user_view_alter()
+ */
+function arena_user_view_alter(&$build){
+  //Don't show e-mails if actual-user is student
+  if(array_key_exists(ARENA_ROLE_STUDENT, $build['#account']->roles)) {
+    unset($build['#account']->field_user_email);
+    unset($build['field_user_email']);
+  }
+}

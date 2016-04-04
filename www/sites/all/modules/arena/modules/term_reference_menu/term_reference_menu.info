@@ -1,0 +1,6 @@
+name = Term Reference Menu
+description = Expanding ajaxified tree widget for terms
+package = Alingsås Intranet
+core = 7.x
+
+dependencies[] = taxonomy

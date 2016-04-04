@@ -1,0 +1,4 @@
+name = Arena LDAP
+description = LDAP related functionality
+package = Arena
+core = 7.x

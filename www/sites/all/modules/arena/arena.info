@@ -1,0 +1,15 @@
+name = Arena Skolportal 
+description = Base module for Arena
+package = Arena
+core = 7.x
+dependencies[] = block
+dependencies[] = comment
+dependencies[] = help
+dependencies[] = menu
+dependencies[] = path
+dependencies[] = taxonomy
+dependencies[] = dblog
+dependencies[] = shortcut
+dependencies[] = toolbar
+dependencies[] = field_ui
+dependencies[] = features

@@ -1,0 +1,12 @@
+<?php
+
+/**
+ * Removes unneeded menu items accidently created by this module.
+ *
+ * @see drupal.org/project/1372972
+ */
+function menuux_update_7001(&$sandbox) {
+  $delete = db_delete('menu_links')
+    ->condition('menu_name', 0)
+    ->execute();
+}

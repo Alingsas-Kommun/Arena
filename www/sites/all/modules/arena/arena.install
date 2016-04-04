@@ -1,0 +1,139 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions
+ *
+ */
+
+
+/**
+ * Implementation of hook_enable().
+ */
+function arena_enable() {
+}
+
+/**
+ * Implementation of hook_disable().
+ */
+function arena_disable() {
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function arena_uninstall() {
+  $ret = array();
+  return $ret;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+function arena_install() {
+  $ret = array();
+  return $ret;
+}
+
+/**
+ * Update promote field in news, notifications, events and tools
+ */
+function arena_update_7101() {
+
+  $type = db_or()
+  ->condition('type', 'news','=')
+  ->condition('type', 'notification','=')
+  ->condition('type', 'event','=')
+  ->condition('type', 'verktyg','=');
+  $promoted = db_select('node', 'n')
+  ->fields('n', array('nid'))
+  ->distinct()
+  ->condition('promote', 1,'=')
+  ->condition($type)
+  ->execute()
+  ->fetchCol();
+  $not_promoted = db_select('node', 'n')
+  ->fields('n', array('nid'))
+  ->distinct()
+  ->condition('promote', 0,'=')
+  ->condition($type)
+  ->execute()
+  ->fetchCol();
+  $result_promoted = db_update('node')
+  ->fields(array(
+      'promote' => 0,
+  ))
+  ->condition('nid', $promoted, 'IN')
+  ->execute();
+  $result_promoted_r = db_update('node_revision')
+  ->fields(array(
+      'promote' => 0,
+  ))
+  ->condition('nid', $promoted, 'IN')
+  ->execute();
+  $result_notpromoted = db_update('node')
+  ->fields(array(
+      'promote' => 1,
+  ))
+  ->condition('nid', $not_promoted, 'IN')
+  ->execute();
+  $result_notpromoted_r = db_update('node_revision')
+  ->fields(array(
+      'promote' => 1,
+  ))
+  ->condition('nid', $not_promoted, 'IN')
+  ->execute();
+  return "Updated ".$result_promoted." promoted and ".$result_notpromoted." unpromoted nodes.";
+}
+
+/**
+ * Update access_keys
+ */
+function arena_update_7102(&$sandbox) {
+  if(!isset($sandbox['max'])) {
+    $max = variable_get('arena_update_7102_max', false);
+    if($max === false) {
+      $type = db_or()
+      ->condition('type', 'news','=')
+      ->condition('type', 'notification','=')
+      ->condition('type', 'event','=')
+      ->condition('type', 'verktyg','=');
+      $promoted = db_select('node', 'n')
+        ->fields('n', array('nid'))
+        ->distinct()
+        ->condition('promote', 1,'=')
+        ->condition($type)
+        ->execute()
+        ->fetchCol();
+      variable_set('arena_update_7102', $promoted);
+      variable_set('arena_update_7102_max', count($promoted));
+    }
+    $sandbox['max'] = $max;
+    $sandbox['current_position'] = 0;
+  }
+
+  if ($sandbox['max'] > 0) {
+    $limit = 2; $i=0;
+    $nodes = variable_get('arena_update_7102', false);
+    foreach($nodes as $nid) {
+      $node = node_load($nid);
+      node_save($node);
+      $i++;
+      if($i >= $limit) {
+        variable_set('arena_update_7102', array_splice($nodes, $i));
+        break;
+      }
+    }
+
+    $sandbox['current_position'] += $limit;
+    $sandbox['#finished'] = $sandbox['current_position'] / $sandbox['max'];
+  }
+  else {
+    $sandbox['#finished'] = 1;
+  }
+
+  if ($sandbox['#finished'] >= 1) {
+    variable_del('arena_update_7102');
+    variable_del('arena_update_7102_max');
+    return format_plural($sandbox['max'], '1 node updated', '@count nodes updated');
+  }
+}

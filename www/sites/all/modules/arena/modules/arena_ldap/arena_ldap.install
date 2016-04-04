@@ -1,0 +1,55 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions
+ *
+ */
+
+/**
+ * Used by the ACL module.
+ */
+function arena_ldap_enabled() {
+  return !arena_ldap_disabling();
+}
+
+
+/**
+ * Remembers if we have disabled access.
+ */
+function arena_ldap_disabling($set = NULL) {
+  static $disabling = FALSE;
+
+  if (isset($set)) {
+    $disabling = $set;
+  }
+  return $disabling;
+}
+
+/**
+ * Implementation of hook_enable().
+ */
+function arena_ldap_enable() {
+}
+
+/**
+ * Implementation of hook_disable().
+ */
+function arena_ldap_disable() {
+  arena_ldap_disabling(TRUE);
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function arena_ldap_uninstall() {
+  $ret = array();
+  return $ret;
+}
+
+/**
+ * Implementation of hook_install().
+ */
+function arena_ldap_install() {
+  $ret = array();
+  return $ret;
+}

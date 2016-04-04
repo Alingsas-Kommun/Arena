@@ -1,0 +1,323 @@
+<?php
+
+if(!defined('ARENA_ROLE_STUDENT')) define('ARENA_ROLE_STUDENT', 8);
+if(!defined('ARENA_ROLE_TEACHER')) define('ARENA_ROLE_TEACHER', 10);
+if(!defined('ARENA_ROLE_ADMINISTRATOR')) define('ARENA_ROLE_ADMINISTRATOR', 6);
+if(!defined('ARENA_ROLE_SCHOOLADMINISTRATOR')) define('ARENA_ROLE_SCHOOLADMINISTRATOR', 12);
+if(!defined('ARENA_ROLE_SUPERADMINISTRATOR')) define('ARENA_ROLE_SUPERADMINISTRATOR', 11);
+
+/**
+ * Implements hook_element_info().
+ */
+function term_reference_tree_element_info() {
+  $types = array(
+      'term_reference_menu' => array(
+          '#input' => true,
+          '#process' => array('_term_reference_menu_process'),
+          '#theme' => array('term_reference_menu'),
+          '#pre_render' => array('form_pre_render_conditional_form_element'),
+      ),
+   );
+}
+
+/**
+ * Implements hook_theme().
+ */
+function term_reference_menu_theme() {
+  return array(
+      'term_reference_menu' => array(
+          'render element' => 'element',
+      ),
+  );
+}
+
+function theme_term_reference_menu($variables) {
+  $element = $variables['element'];
+  $element['#children'] = drupal_render_children($element);
+
+  $attributes = array();
+  if (isset($element['#id'])) {
+    $attributes['id'] = $element['#id'];
+  }
+  $attributes['class'][] = 'term-reference-menu';
+
+  if (form_get_error($element)) {
+    $attributes['class'][] = 'error';
+  }
+
+  if (!empty($element['#required'])) {
+    $attributes['class'][] = 'required';
+  }
+
+  if (!empty($element['#attributes']['class'])) {
+    $attributes['class'] = array_merge($attributes['class'], $element['#attributes']['class']);
+  }
+  return
+  '<div' . drupal_attributes($attributes) . '>'
+  . (!empty($element['#children']) ? $element['#children'] : '')
+  . '</div>';
+}
+
+
+
+/**
+ * Implements hook_field_widget_info().
+ */
+function term_reference_menu_field_widget_info() {
+  return array(
+    'term_reference_menu' => array(
+      'label' => t('Term reference menu'),
+      'field types' => array('taxonomy_term_reference'),
+      'behaviors' => array(
+        'multiple values' => FIELD_BEHAVIOR_CUSTOM,
+        'default value' => FIELD_BEHAVIOR_DEFAULT,
+      ),
+      'settings' => array(
+        'restrict_level' => 0,
+        'startid' => 0,
+      ),
+    ),
+  );
+}
+
+function term_reference_menu_form_field_ui_field_settings_form_alter(&$form, &$form_state){ 
+  //catched stored values
+  $field = field_info_field($form['field']['field_name']['#value']);
+  $form['field']['settings']['restrict_level'] = array(
+    '#type' => 'textfield', 
+    '#title' => t('Level depth'), 
+    '#default_value' => isset($field['settings']['restrict_level']) ? $field['settings']['restrict_level'] : 0, 
+    '#size' => 10, 
+    '#maxlength' => 5, 
+    '#required' => FALSE,
+  
+  );
+  $form['field']['settings']['startid'] = array(
+    '#type' => 'textfield', 
+    '#title' => t('Starting term id'), 
+    '#default_value' => isset($field['settings']['startid']) ? $field['settings']['startid'] : 0, 
+    '#size' => 10, 
+    '#maxlength' => 10, 
+    '#required' => FALSE,
+  
+  );
+
+  return $form;
+}
+/**
+ * Implements hook_field_widget_form().
+ */
+function term_reference_menu_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  $default_value = array();
+  $terms = array(); $result = array();
+  if(count($items)){
+    foreach($items as $item){
+      $default_value[] = $item['tid'];
+    }
+    $default_value = implode(',', $default_value);
+  }
+
+  $path = drupal_get_path('module', 'term_reference_menu');
+  $element += array(
+    '#type' => 'textfield',
+    '#maxlength' => 2048,
+    '#default_value' => $default_value,
+    '#element_validate' => array('_term_reference_menu_validate'),
+    '#attached' => array(
+        'js' => array( $path . '/term_reference_menu.js' ),
+        'css' => array( $path . '/term_reference_menu.css' ),
+      ),
+    );
+  _term_reference_add_js($element, $form_state);
+  return $element;
+}
+
+function _term_reference_add_js($element, $form_state) {
+  $settings['voc'] = $element['settings']['allowed_values'][0]['vocabulary'];
+  $settings['field_name'] = $element['#field_name'];
+  $settings['maxitems'] = 0;
+  $settings['itemsselected'] = array();
+  if(isset($form_state['field'][$element['#field_name']]['und']['field']['cardinality']) && $form_state['field'][$element['#field_name']]['und']['field']['cardinality'] >= 1){
+    $settings['maxitems'] = $form_state['field'][$element['#field_name']]['und']['field']['cardinality'];
+  }
+
+  if(!$form_state['submitted']) {
+    if($element['#default_value']) {
+      $settings['itemsselected'] = taxonomy_term_load_multiple(explode(',', $element['#default_value']));
+    }
+  }
+  else {
+    if($form_state['input'][$element['#field_name']]['und']) {
+      $settings['itemsselected'] = taxonomy_term_load_multiple(explode(',', $form_state['input'][$element['#field_name']]['und']));
+    }
+  }
+
+  if(count($settings['itemsselected'])){
+    foreach($settings['itemsselected'] as &$item){
+      $item->path = _term_reference_menu_get_path($item->tid);
+    }
+  }
+  $settings['items'] = _term_reference_menu_get_items(0, $element['#field_name']);
+  drupal_add_js(array($element['#field_name'] => $settings), 'setting');
+}
+
+function _term_reference_menu_validate($element, &$form_state) {
+  $items = array();
+  $result = array();
+  if($element['#value']){
+    $items = explode(',',$element['#value']);
+  }
+  if(count($items)){
+    $items = taxonomy_term_load_multiple($items);
+    foreach ($items as $item) {
+      $item = (array)$item;
+      $item['path'] = _term_reference_menu_get_path($item['tid']);
+      $result[] = $item;
+    }
+  }
+  form_set_value($element, $result, $form_state);
+  _term_reference_add_js($element, $form_state, $form_state['field'][$element['#field_name']]['und']['field']['settings']['allowed_values'][0]['vocabulary']);
+}
+
+/**
+  * Implements hook_menu().
+  */
+function term_reference_menu_menu() {
+  $items['term-reference-menu/%/%/get'] = array(
+      'page callback' => '_term_reference_menu_ajax_get_items',
+      'page arguments' => array(1,2),
+      'access callback' => 'user_access',
+      'access arguments' => array('access content'),
+      'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function term_reference_menu_permission() {
+  return array(
+    'bypass organizational structure filter' => array(
+      'title' => t('Bypass organizational structure filter'),
+      'description' => t("Make users be able to select any LDAP group, not only the ones they are member of."),
+    ),
+  );
+}
+
+function _term_reference_menu_process($element, $form_state) {
+  return $element;
+}
+
+function _term_reference_menu_get_path($tid = null, $self = false){
+  $path = array();
+  if($tid) {
+    $parents = taxonomy_get_parents($tid);
+    foreach($parents as $parent){
+      $path_tmp = array();
+      $item = $parent;
+      while($item !== false) {
+        if(strlen($item->name) > 13){
+          $path_tmp[] = substr($item->name,0,10)."...";
+        }
+        else {
+          $path_tmp[] = $item->name;
+        }
+        $item_tmp = taxonomy_get_parents($item->tid);
+        if(count($item_tmp)){
+          $item = reset($item_tmp);
+        }
+        else {
+          $item = false;
+        }
+      }
+      $path[] = join(' &gt ', array_reverse($path_tmp));
+    }
+  }
+  return $path;
+}
+
+function _term_reference_menu_get_items($tid = 0, $field_name) {
+  global $user;
+  $field = field_info_field($field_name);
+  $voc_name = $field['settings']['allowed_values'][0]['vocabulary'];
+  if ($cache = cache_get('term_reference_menu_items_'.$voc_name.$tid)){
+    $items = $cache->data;
+  }
+  else {
+    $user_groups = array();
+    $exclude_groups = array();
+    try {
+      $user_wrapper = entity_metadata_wrapper('user', $user->uid);
+      $user_groups = $user_wrapper->field_organizational_structure->value();
+      if(array_key_exists(ARENA_ROLE_TEACHER, $user->roles) && !array_key_exists(ARENA_ROLE_ADMINISTRATOR, $user->roles) && !array_key_exists(ARENA_ROLE_SCHOOLADMINISTRATOR, $user->roles) && !array_key_exists(ARENA_ROLE_SUPERADMINISTRATOR, $user->roles)) {
+        $exclude_groups = $user_wrapper->field_user_school->value();
+      }
+      elseif(array_key_exists(ARENA_ROLE_SCHOOLADMINISTRATOR, $user->roles)) {
+      }
+    }
+    catch (EntityMetadataWrapperException $exception) {
+      watchdog_exception('term_reference_menu', $exception);
+    }
+
+    if(count($user_groups)) {
+      foreach($user_groups as $key=>$value) {
+        $user_groups[$key] = $value->tid;
+      }
+    }
+
+    if(count($exclude_groups)) {
+      foreach($exclude_groups as $key=>$value) {
+        $exclude_groups[$key] = $value->tid;
+      }
+    }
+
+    if($voc_name) {
+      if(!$voc = taxonomy_vocabulary_machine_name_load($voc_name)) {
+        $voc = taxonomy_vocabulary_machine_name_load('organizational_structure');
+      }
+    }
+    else {
+      $voc = taxonomy_vocabulary_machine_name_load('organizational_structure');
+    }
+
+    //if($tid==0 && isset($user_groups[0])) $tid = $user_groups[0];
+    if($tid==0 && isset($field['settings']['startid']) && $field['settings']['startid'] > 0) $tid = $field['settings']['startid']; 
+    $items = taxonomy_get_tree($voc->vid,$tid,1);
+    $term = false;
+    if($tid != 0) {
+      $term = taxonomy_term_load($tid);
+      $term = $term->name;
+    }
+    $path = _term_reference_menu_get_path($tid, $term);
+    foreach($items as $key=>$value){
+      if(!user_access('bypass organizational structure filter') && !in_array($value->tid, $user_groups)){
+        unset($items[$key]);
+      }
+      else {
+        if(in_array($value->tid, $exclude_groups)) {
+          $items[$key]->locked = TRUE;
+        }
+        $items[$key]->has_children = FALSE;
+        if (!user_access('bypass organizational structure filter')) {
+          foreach(taxonomy_get_children($value->tid,$voc->vid) as $child) {
+            if(in_array($child->tid, $user_groups)) {
+              $items[$key]->has_children = TRUE;
+              break;
+            }
+          }
+        }
+        elseif(count(taxonomy_get_children($value->tid, $voc->vid))) {
+          $items[$key]->has_children = TRUE;
+        }
+        $items[$key]->path = _term_reference_menu_get_path($value->tid);
+      }
+    }
+  }
+  return($items);
+}
+
+function _term_reference_menu_ajax_get_items($tid = 0, $field = false) {
+  $items = _term_reference_menu_get_items($tid, $field);
+  drupal_json_output($items);
+}

@@ -1,0 +1,4 @@
+name = Arena Access Restrictions
+description = Access restriction based on groups
+package = Arena
+core = 7.x

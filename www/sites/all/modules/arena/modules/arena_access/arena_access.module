@@ -1,0 +1,222 @@
+<?php
+
+/**
+ * @file
+ * Access restrictions based on groups
+ */
+
+if(!defined('ARENA_ROLE_TEACHER')) define('ARENA_ROLE_TEACHER', 10);
+if(!defined('ARENA_ROLE_ADMINISTRATOR')) define('ARENA_ROLE_ADMINISTRATOR', 6);
+if(!defined('ARENA_ROLE_SCHOOLADMINISTRATOR')) define('ARENA_ROLE_SCHOOLADMINISTRATOR', 12);
+if(!defined('ARENA_ROLE_SUPERADMINISTRATOR')) define('ARENA_ROLE_SUPERADMINISTRATOR', 11);
+
+return array(
+    'Modify page access' => array(
+        'title' => t('Restrict page access'),
+        'description' => t('Restrict access to pages.'),
+    ),
+    'View restricted pages' => array(
+        'title' => t('View restricted pages'),
+        'description' => t('View pages with restricted permissions.'),
+    ),
+);
+
+function arena_access_node_access($node, $op, $account) {
+  return NODE_ACCESS_IGNORE;
+  $type = is_string($node) ? $node : $node->type;
+  //only restricted pages are relevant for now
+  if ($type = 'page'
+      && isset($node->field_secure_by_group['und'][0]['value'])
+      && $node->field_secure_by_group['und'][0]['value']
+      && isset($node->field_access_groups['und'][0]['tid'])) {
+
+    $access_groups = array();
+    foreach($node->field_access_groups['und'] as $entry) {
+      $access_groups[] = $entry['tid'];
+    }
+    //check the user
+    $user = user_load($account->uid);
+    if(isset($user->field_organizational_structure['und'][0]['tid'])) {
+      foreach($user->field_organizational_structure['und'] as $entry) {
+        if(in_array($entry['tid'], $access_groups)) {
+          return NODE_ACCESS_ALLOW;
+        }
+      }
+    }
+    return NODE_ACCESS_DENY;
+  }
+
+  // Returning nothing from this function would have the same effect.
+  return NODE_ACCESS_IGNORE;
+}
+
+function arena_access_node_access_records($node) {
+  $grants = array(); $groups = array();
+  if ($node->status && isset($node->field_organizational_structure[LANGUAGE_NONE][0]['tid'])) {
+    foreach($node->field_organizational_structure[LANGUAGE_NONE] as $entry) {
+      $groups[] = $entry['tid'];
+    }
+  }
+  elseif ($node->status && isset($node->field_secure_by_group['und'][0]['value'])
+          && $node->field_secure_by_group['und'][0]['value']
+          && isset($node->field_access_groups['und'][0]['tid'])) {
+    foreach($node->field_access_groups['und'] as $entry) {
+      $groups[] = $entry['tid'];
+    }
+  }
+  if (count($groups)) {
+    foreach($groups as $entry) {
+      $grants[] = array(
+          'realm' => 'arena_organization',
+          'gid' => $entry,
+          'grant_view' => 1,
+          'grant_update' => 0,
+          'grant_delete' => 0,
+          'priority' => 1,
+        );
+      $grants[] = array(
+          'realm' => 'arena_organization_teacher',
+          'gid' => $entry,
+          'grant_view' => 1,
+          'grant_update' => 1,
+          'grant_delete' => 0,
+          'priority' => 1,
+      );
+      $grants[] = array(
+          'realm' => 'arena_organization_admin',
+          'gid' => $entry,
+          'grant_view' => 1,
+          'grant_update' => 1,
+          'grant_delete' => 1,
+          'priority' => 1,
+      );
+
+    }
+  }
+  elseif($node->status) {
+    $grants[] = array(
+        'realm' => 'all',
+        'gid' => 0,
+        'grant_view' => 1,
+        'grant_update' => 0,
+        'grant_delete' => 0,
+        'priority' => 1,
+    );
+  }
+
+  $grants[] = array(
+        'realm' => 'arena_author',
+        'gid' => $node->uid,
+        'grant_view' => 1,
+        'grant_update' => 1,
+        'grant_delete' => 1,
+        'priority' => 1,
+  );
+  
+  return $grants;
+}
+
+function arena_access_node_grants($account, $op) {
+  /*if (user_access('access private content', $account)) {
+    $grants['example'] = array(1);
+  }*/
+
+  
+
+  $grants['all'] = array(0);
+  $grants['arena_author'] = array($account->uid);
+  $user = user_load($account->uid);
+  if(isset($user->field_organizational_structure['und'][0]['tid'])) {
+    $grants['arena_organization'] = array();
+    foreach($user->field_organizational_structure['und'] as $entry) {
+      $grants['arena_organization'][] = $entry['tid'];
+      if(array_key_exists(ARENA_ROLE_TEACHER, $user->roles)) {
+        $grants['arena_organization_teacher'][] = $entry['tid'];
+      }
+      if(array_key_exists(ARENA_ROLE_SCHOOLADMINISTRATOR, $user->roles) || array_key_exists(ARENA_ROLE_SUPERADMINISTRATOR, $user->roles)) {
+        $grants['arena_organization_admin'][] = $entry['tid'];
+      }
+
+    }
+  }
+  //dpr($grants);
+  return $grants;
+}
+
+function arena_access_node_access_records_alter(&$grants, $node) {
+  //var_dump($grants); exit;
+}
+
+function arena_access_node_presave($node) {
+
+}
+
+function arena_access_node_insert($node) {
+  _arena_access_update_keys($node);
+}
+
+function arena_access_node_update($node) {
+  _arena_access_update_keys($node);
+}
+
+function arena_access_node_delete($node) {
+  db_delete('arena_access_keys')
+  ->condition('nid', $node->nid)
+  ->execute();
+}
+
+function _arena_access_update_keys($node) {
+  db_delete('arena_access_keys')
+  ->condition('nid', $node->nid)
+  ->execute();
+  $keys = array(); $org = array(); $tar = array();
+  if(isset($node->field_organizational_structure['und']) && count($node->field_organizational_structure['und'])) {
+    $org = $node->field_organizational_structure['und'];
+  }
+  if(isset($node->field_target_groups['und']) && count($node->field_target_groups['und'])) {
+    $tar = $node->field_target_groups['und'];
+  }
+  //if organization and target groups are defined we add them as an AND relation
+  if(count($tar) && count($org)) {
+    foreach($org as $org_item) {
+      foreach($tar as $tar_item) {
+        $keys['o_'.$org_item['tid'].'t_'.$tar_item['tid']] = 1;
+      }
+    }
+  }
+  //if only organizations are set add them
+  elseif(count($org)) {
+    foreach($org as $org_item) {
+      $keys['o_'.$org_item['tid']] = 1;
+    }
+  }
+  //if only target groups are set add them
+  elseif(count($tar)) {
+    foreach($tar as $tar_item) {
+      $keys['t_'.$tar_item['tid']] = 1;
+    }
+  }
+  $query = db_insert('arena_access_keys')->fields(array('nid', 'keystring'));
+  foreach (array_keys($keys) as $record) {
+    $query->values(array('nid' => $node->nid, 'keystring' =>$record));
+  }
+  $query->execute();
+}
+
+/* TODO: update user access keys when user is modified. */
+
+function arena_access_user_presave(&$edit, $account, $category) {
+  if(isset($edit['field_organizational_structure']) && isset($edit['field_target_groups'])) {
+    $keys = array();
+    foreach($edit['field_organizational_structure'][LANGUAGE_NONE] as $org_item) {
+      $keys['o_'.$org_item['tid']] = 1;
+      foreach($edit['field_target_groups'][LANGUAGE_NONE] as $tar_item) {
+        $keys['o_'.$org_item['tid'].'t_'.$tar_item['tid']] = 1;
+      }
+    }
+    foreach($edit['field_target_groups'][LANGUAGE_NONE] as $tar_item) {
+      $keys['t_'.$tar_item['tid']] = 1;
+    }
+    //$edit['field_access_keys'][LANGUAGE_NONE][0]['value'] = serialize(array_keys($keys));
+  }
+}

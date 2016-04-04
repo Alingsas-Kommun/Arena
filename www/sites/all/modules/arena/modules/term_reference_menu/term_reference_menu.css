@@ -1,0 +1,70 @@
+/* orga selector */
+.term-reference-menu {
+	width: 100%;
+	padding-left: 3px;
+	padding-right: 3px;
+}
+.term-reference-menu .selector, .term-reference-menu .container {
+  width: 100%;
+  padding: 8px 0px;
+  border: 1px solid #CCC;
+  -webkit-border-radius: 2px;
+  -moz-border-radius: 2px;
+  border-radius: 2px;
+}
+.term-reference-menu ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.term-reference-menu li span.name {
+  height: 20px;
+  padding-left: 15px;
+}
+.term-reference-menu li.has-children > span.name {
+  cursor: pointer;
+  background-image: url('/sites/all/modules/arena/modules/term_reference_menu/link-arrow.png');
+  background-repeat: no-repeat;
+  background-position: left 5px;
+}
+.term-reference-menu li.has-children.active > span.name {
+  background-image: url('/sites/all/modules/arena/modules/term_reference_menu/link-arrow-down.png');
+}
+.term-reference-menu li span.add, .term-reference-menu li span.del {
+  float: right;
+  width: 20px;
+  overflow: hidden;
+  text-indent: 9999px;
+  height: 20px;
+  background-image: url('/sites/all/modules/arena/modules/term_reference_menu/icon-plus.png');
+  cursor: pointer;
+  background-repeat: no-repeat;
+}
+.term-reference-menu li span.del {
+  background-image: url('/sites/all/modules/arena/modules/term_reference_menu/btn-remove.png');
+}
+.term-reference-menu li.selected > span.add,
+.term-reference-menu li.locked > span.add {
+	  background-image: url('/sites/all/modules/arena/modules/term_reference_menu/toggle-button.png');
+}
+
+
+.term-reference-menu li {
+  margin: 0;
+  padding: 0;
+  background-color: transparent;
+}
+.term-reference-menu li.over > span.name {
+  background-color: #eee;
+}
+.term-reference-menu li ul {
+  display: none;
+}
+.term-reference-menu li li {
+  margin-left: 15px;
+  padding: 0;
+}
+
+.tr-error .term-reference-menu .container {
+	border-color: #f00;
+}

@@ -1,0 +1,529 @@
+<?php
+
+/**
+ * @file
+ * LDAP functionality for Arena 
+ */
+
+/**
+ * Implements hook_permission()
+ */
+
+function arena_ldap_permission() {
+  $permission = array();
+  $permission['arena keep manual ldap groups'] = array(
+    'title' => t('Keep manual groups'),
+    'description' => t('Keep the manually set LDAP-groups after login.'),
+  );
+  $permission['arena skip ldap usersync'] = array(
+    'title' => t('Skip LDAP sync'),
+    'description' => t('Leave user even if LDAP-entry is missing.'),
+  );
+  return($permission);
+}
+
+/**
+  * Implements hook_menu().
+  */
+function arena_ldap_menu() {
+  $items['admin/ldap/sync/groups'] = array(
+      'page callback' => '_arena_ldap_sync_groups',
+      'access arguments' => array('administer users'),
+      'type' => MENU_CALLBACK,
+  );
+  $items['admin/ldap/sync/users'] = array(
+      'page callback' => '_arena_ldap_sync_users',
+      'access arguments' => array('administer users'),
+      'type' => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Cron jobs for syncing stuff.
+ */
+function arena_ldap_cron() {
+
+  $lastsync = variable_get('arena_ldap_lastsync', 0);
+  //Run this after 4 clock
+  if($_GET['groups_sync'] || (date('G') == 4 && $lastsync < (time()-(12*60*60)))){
+    drupal_set_message("Running LDAP-group-sync...");
+    _arena_ldap_sync_groups();
+  }
+
+  //Run this hourly
+  $lastsync = variable_get('arena_ldap_users_lastsync', 0);
+  if($_GET['users_add'] || $lastsync < (time()-(1*60*60))){
+    drupal_set_message("Running LDAP-user-sync...");
+    _arena_ldap_add_users();
+  }
+
+  //Run this every day around 20
+  $lastsync = variable_get('arena_check_user_lastsync', 0);
+  if($_GET['users_delete'] || date('G') == 20 && $lastsync < (time()-(12*60*60))){
+    drupal_set_message("Running LDAP user-check...");
+    _arena_ldap_check_users();
+  }
+
+}
+
+/**
+ * Run ldap_sync for groups.
+ */
+function _arena_ldap_sync_groups($intern = FALSE) {
+  $lasthash = variable_get('arena_ldap_lasthash', '');
+  if(!$intern) $lasthash = '';
+  if($voc = taxonomy_vocabulary_machine_name_load('organizational_structure')){
+    $queries = ldap_query_get_queries('ldap_group_hierarchy', 'enabled');
+    $result = $queries['ldap_group_hierarchy']->query();
+    $groups = array();
+    $dns = array();
+    for($i=0; $i < $result['count']; $i++) {
+      if(isset($result[$i]['pidparentdn']['count'])) unset($result[$i]['pidparentdn']['count']);
+      $groups[$result[$i]['dn']] = array('name' => $result[$i]['description'][0], 'parent' => $result[$i]['pidparentdn']);
+    }
+
+    if(count($groups)) {
+      ksort($groups);
+      //only run this if the group array differs.
+      $hash = hash('md4', serialize($groups));
+      if($hash !== $lasthash) {
+        $count = 0;
+        //Delete all items from queue.
+        $queue = DrupalQueue::get('addLdapGroups', TRUE);
+        $queue->deleteQueue();
+        $queue = DrupalQueue::get('addLdapGroups', TRUE);
+        foreach($groups as $key => $value){
+          $dns[] = $key;
+          $item = array();
+          $item['vid'] = $voc->vid;
+          $item['dn'] = $key;
+          $item['parents'] = $value['parent'];
+          $item['name'] = $value['name'];
+          $queue->createItem($item);
+          $count++;
+        }
+        $queue = DrupalQueue::get('removeLdapGroups', TRUE);
+        $queue->createItem($dns);
+        drupal_set_message("Added $count jobs (LDAP groups) to cron-queue. (DNs: ".count($dns).")");
+        variable_set('arena_ldap_lastsync', time());
+        variable_set('arena_ldap_lasthash', $hash);
+      }
+    }
+    else {
+      //Keep the old entries - LDAP is not reachable or doesn't return groups...
+      drupal_set_message("The LDAP server didn't return any groups!", 'error');
+    }
+  }
+  $lasthash = variable_get('arena_ldap_targetgroups_lasthash', '');
+  if($voc = taxonomy_vocabulary_machine_name_load('target_groups')){
+    $queries = ldap_query_get_queries('ldap_target_groups', 'enabled');
+    $result = $queries['ldap_target_groups']->query();
+    $groups = array();
+    $dns = array();
+    for($i=0; $i < $result['count']; $i++) {
+      if($result[$i]['cn']) $result[$i]['cn'] = str_replace('AK-Role-Group-', '', $result[$i]['cn'][0]);
+      $groups[$result[$i]['dn']] = array('name' => $result[$i]['cn']);
+    }
+
+    if(count($groups)) {
+      ksort($groups);
+      //only run this if the group array differs.
+      $hash = hash('md4', serialize($groups));
+      //dpm(print_r($groups, TRUE));
+      if($hash !== $lasthash) {
+        $count = 0;
+        //Delete all items from queue.
+        $queue = DrupalQueue::get('addLdapTargetGroups', TRUE);
+        $queue->deleteQueue();
+        $queue = DrupalQueue::get('addLdapTargetGroups', TRUE);
+        foreach($groups as $key => $value){
+          $dns[] = $key;
+          $item = array();
+          $item['vid'] = $voc->vid;
+          $item['dn'] = $key;
+          $item['name'] = $value['name'];
+          $queue->createItem($item);
+          $count++;
+        }
+        $queue = DrupalQueue::get('removeLdapTargetGroups', TRUE);
+        $queue->createItem($dns);
+        drupal_set_message("Added $count jobs (LDAP target groups) to cron-queue. (DNs: ".count($dns).")");
+        variable_set('arena_ldap_lastsync', time());
+        variable_set('arena_ldap_targetgroups_lasthash', $hash);
+      }
+    }
+    else {
+      //Keep the old entries - LDAP is not reachable or doesn't return groups...
+      drupal_set_message("The LDAP server didn't return any target groups!", 'error');
+    }
+  }
+}
+
+/**
+ * Run ldap_sync for users.
+ */
+function _arena_ldap_add_users() {
+  $lasthash = variable_get('arena_ldap_users_lasthash', '');
+  $lastsync = variable_get('arena_ldap_users_lastsync', 0);
+  $now = time();
+  if(!$intern) $lasthash = '';
+  $queries = ldap_query_get_queries('ldap_users', 'enabled');
+  $queries['ldap_users']->filter = '(&(groupMembership=cn=AK-AutoStu-1-Koncern,ou=Organizational-Structure-Students,ou=Groups,o=Alingsas)(pidObjectCreationTime>='.date('Ymd H:i:s', $lastsync).'))';
+  $result = $queries['ldap_users']->query();
+  $count = 0;
+  if(isset($result['count']) && $result['count'] > 0) {
+    $queue = DrupalQueue::get('addLdapUsers', TRUE);
+
+    for($i=0; $i < $result['count']; $i++) {
+      if($result[$i]['uid'][0]) {
+        $mail = ($result[$i]['mail'][0]) ? $result[$i]['mail'][0] : $result[$i]['uid'].'@arena.alingsas.se';
+        $user = array(
+            'uid' => $result[$i]['uid'][0],
+            'mail' => $mail,
+        );
+        $queue->createItem($user);
+        $count++;
+      }
+    }
+    watchdog('ldap_users', "Added $count new users (from LDAP) to cron-queue.");
+    variable_set('arena_ldap_users_lastsync', $now);
+  }
+  else {
+    drupal_set_message("The LDAP server didn't return any users!", 'error');
+  }
+
+}
+
+/**
+ * Run ldap_sync for users.
+ */
+function _arena_ldap_check_users() {
+  $queue = DrupalQueue::get('checkUsers', TRUE);
+  $now = time();
+  if($queue->numberOfItems() <= 0) {
+    $users = db_query('SELECT entity_id from {field_data_ldap_user_current_dn}')->fetchCol(0);
+    foreach($users as $uid) {
+      $queue->createItem(array('uid'=> $uid));
+    }
+  }
+  variable_set('arena_check_user_lastsync', $now);
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function arena_cron_queue_info() {
+  $queues = array();
+  $queues['addLdapGroups'] = array(
+      'worker callback' => '_worker_add_group',
+      'time' => 60,
+  );
+  $queues['removeLdapGroups'] = array(
+      'worker callback' => '_worker_delete_group',
+      'time' => 60,
+  );
+  $queues['addLdapTargetGroups'] = array(
+      'worker callback' => '_worker_add_targetgroup',
+      'time' => 60,
+  );
+  $queues['removeLdapTargetGroups'] = array(
+      'worker callback' => '_worker_delete_targetgroup',
+      'time' => 60,
+  );
+  $queues['addLdapUsers'] = array(
+      'worker callback' => '_worker_add_user',
+      'time' => 60,
+    );
+  $queues['checkUsers'] = array(
+      'worker callback' => '_worker_check_user',
+      'time' => 60,
+  );
+
+  return $queues;
+}
+
+/**
+ * Worker for user import
+ */
+function _worker_add_user($item) {
+  if($user = user_load_by_name($item['uid'])) {
+    $message = "Updating user ".$user->name."... ";
+  }
+  else {
+    $message = "Creating user ".$item['name']."... ";
+    $password = user_password(8);
+    if(!$item['mail']) $item['mail'] = $item['uid'].'@arena.alingsas.se';
+    $fields = array(
+      'name' => $item['uid'],
+      'mail' => $item['mail'],
+      'pass' => $password,
+      'status' => 1,
+      'init' => $item['mail'],
+      'roles' => array(
+        DRUPAL_AUTHENTICATED_RID => 'authenticated user',
+      ),
+    );
+    $user = user_save('', $fields);
+  }
+  _arena_update_authmaps($user);
+
+  drupal_load('module', 'ldap_user');
+  $ldap = new LdapUserConf();
+  $edit = array();
+  if($ldap->synchToDrupalAccount($user, $edit, LDAP_USER_EVENT_SYNCH_TO_DRUPAL_USER, NULL,  TRUE)) {
+    $message .= "Done.";
+  }
+  else {
+    $message .= "Failed!";
+  }
+  drupal_set_message($message);
+}
+
+/**
+ * Update shibboleth authmaps if new user is adde,
+ */
+function _arena_update_authmaps($user) {
+  if($user->name && $user->uid) {
+    $idp = 'https://idp.alingsas.se/skolfed';
+    //write an entry into shib_authmap set the current consent version
+    db_delete('authmap')
+      ->condition('uid', $user->uid)
+      ->condition('authname', $user->name)
+      ->execute();
+    db_insert('authmap')
+      ->fields(array(
+        'uid' => $user->uid,
+        'authname' => $user->name,
+        'module' => 'shib_auth',
+      ))
+      ->execute();
+    db_delete('shib_authmap')
+      ->condition('uid', $user->uid)
+      ->condition('targeted_id', $user->name)
+      ->execute();
+    db_insert('shib_authmap')
+      ->fields(array(
+        'uid' => $user->uid,
+        'targeted_id' => $user->name,
+        'idp' => $idp,
+        'created' => time(),
+        'consentver' => shib_auth_config('terms_ver'),
+        ))
+      ->execute();
+  }
+}
+
+function _worker_check_user($item) {
+  $message_type = 'check_user';
+  if($user = user_load($item['uid'])) {
+    if($user->uid == 1 || $user->uid == 0) {
+      $message = 'Check user: Skipping user 1 and 0.';
+    }
+    else {
+      if(user_access('arena skip ldap usersync')){
+        $message = 'Check user: Skipping user '.$user->name.'. User is admin.';
+      }
+      else {
+        $queries = ldap_query_get_queries('ldap_users', 'enabled');
+        $queries['ldap_users']->filter = '(cn='.$user->name.')';
+        $result = $queries['ldap_users']->query();
+        if(isset($result['count']) && $result['count'] > 0) {
+          $message = 'User '.$user->name.' exists.';
+        }
+        elseif(isset($result['count']) && $result['count'] == 0) {
+          $message_type = 'check_user_delete';
+          $message = 'User '.$user->name.' will be deleted.';
+          user_cancel(array(), $user->uid, 'user_cancel_reassign');
+          $batch =& batch_get();
+          $batch['progressive'] = FALSE;
+          batch_process();
+        }
+        else {
+          $message = 'Error: no connection to LDAP-server. Requeueing user.';
+          $queue = DrupalQueue::get('checkLdapUsers', TRUE);
+          $queue->createItem(array('uid'=>$user->uid));
+          $message_type = 'check_user_error';
+        }
+      }
+    }
+  }
+  else {
+    $message = 'Check user: User with id '.$item['uid'].' is not existing.';
+  }
+
+  watchdog($message_type, $message);
+}
+
+
+/**
+ * Worker for group import
+ */
+function _worker_add_group($item) {
+  $queue = DrupalQueue::get('addLdapGroups', TRUE);
+  $newterm = new stdClass();
+  $newterm->name = $item['name'];
+  $newterm->vid = $item['vid'];
+  $newterm->parent = array();
+  $field_dn = array();
+  $field_dn[LANGUAGE_NONE][0]['value'] = $item['dn'];
+  $newterm->field_taxonomy_dn = $field_dn;
+  $query = new EntityFieldQuery();
+  $result = $query
+    ->entityCondition('entity_type', 'taxonomy_term')
+    ->propertyCondition('vid', $item['vid'])
+    ->fieldCondition('field_taxonomy_dn', 'value', $item['dn'], '=', 0)
+    ->execute();
+  if(count($result)) {
+    $term = array_keys($result['taxonomy_term']);
+    $newterm->tid = $term[0];
+  }
+
+  if(!count($item['parents'])) {
+    $newterm->parent[] = 0;
+  }
+  else {
+    $query = new EntityFieldQuery();
+    if(isset($item['parents']['count'])) unset($item['parents']['count']);
+    $result = $query
+    ->entityCondition('entity_type', 'taxonomy_term')
+    ->propertyCondition('vid', $item['vid'])
+    ->fieldCondition('field_taxonomy_dn', 'value', $item['parents'], 'IN', 0)
+    ->execute();
+    if(count($result)) {
+      //ok we've found some parents
+      $newterm->parent = array_keys($result['taxonomy_term']);
+    }
+  }
+  if(count($newterm->parent) < count($item['parents'])) {
+    /* parent element is not there: push it again to the queue */
+    $status = taxonomy_term_save($newterm);
+    if($status == SAVED_NEW) {
+      drupal_set_message("Created term but rescheduled for check: ".$item['dn']);
+    }
+    elseif($status == SAVED_UPDATED) {
+      drupal_set_message("Updated term but rescheduled for check: ".$item['dn']);
+    }
+    else {
+      drupal_set_message("Error: Could not add term (rescheduled for adding). ".$item['dn'], 'error');
+    }
+    $queue->createItem($item);
+  }
+  elseif(count($newterm->parent)) {
+    $status = taxonomy_term_save($newterm);
+    if($status == SAVED_NEW) {
+      drupal_set_message("Created new: ".$item['dn']);
+    }
+    elseif($status == SAVED_UPDATED) {
+      drupal_set_message("Updated term : ".$item['dn']);
+    }
+    else {
+      drupal_set_message("Error: Could not add term (rescheduled for adding). ".$item['dn'], 'error');
+      $queue->createItem($item);
+    }
+  }
+}
+
+/**
+ * Worker for group delete
+ */
+function _worker_delete_group($dns) {
+  $voc = taxonomy_vocabulary_machine_name_load('organizational_structure');
+  $terms = taxonomy_get_tree($voc->vid, 0, NULL, TRUE);
+  $query = new EntityFieldQuery();
+  $result = $query
+  ->entityCondition('entity_type', 'taxonomy_term')
+  ->propertyCondition('vid', $voc->vid)
+  ->fieldCondition('field_taxonomy_dn', 'value', $dns, 'NOT IN', 0)
+  ->execute();
+  foreach (array_keys($result['taxonomy_term']) as $term) {
+    taxonomy_term_delete($term);
+    $count++;
+  }
+  drupal_set_message("Deleted $count obsolete terms.");
+}
+
+/**
+ * Worker for target group import
+ */
+function _worker_add_targetgroup($item) {
+  $queue = DrupalQueue::get('addLdapTargetGroups', TRUE);
+  $newterm = new stdClass();
+  $newterm->name = $item['name'];
+  $newterm->vid = $item['vid'];
+  $newterm->parent[] = 0;
+  $field_dn = array();
+  $field_dn[LANGUAGE_NONE][0]['value'] = $item['dn'];
+  $newterm->field_taxonomy_dn = $field_dn;
+  $query = new EntityFieldQuery();
+  $result = $query
+  ->entityCondition('entity_type', 'taxonomy_term')
+  ->propertyCondition('vid', $item['vid'])
+  ->fieldCondition('field_taxonomy_dn', 'value', $item['dn'], '=', 0)
+  ->execute();
+  if(count($result)) {
+    $term = array_keys($result['taxonomy_term']);
+    $newterm->tid = $term[0];
+    if(count($term) > 1) {
+      drupal_set_message('There are multiple terms with similar dn in target_groups ('.$item['dn'].')', 'warning');
+      array_shift($term);
+      foreach($term as $tid) {
+        taxonomy_term_delete($tid);
+        drupal_set_message('Deleted tid:'.$tid, 'warning');
+      }
+    }
+  }
+  $status = taxonomy_term_save($newterm);
+  if($status == SAVED_NEW) {
+    drupal_set_message("Created new: ".$item['dn']);
+  }
+  elseif($status == SAVED_UPDATED) {
+    drupal_set_message("Updated term : ".$item['dn']);
+  }
+  else {
+    drupal_set_message("Error: Could not add term (rescheduled for adding). ".$item['dn'], 'error');
+    $queue->createItem($item);
+  }
+}
+
+/**
+ * Worker for target group delete
+ */
+function _worker_delete_targetgroup($dns) {
+  $voc = taxonomy_vocabulary_machine_name_load('target_groups');
+  $terms = taxonomy_get_tree($voc->vid, 0, NULL, TRUE);
+  $query = new EntityFieldQuery();
+  $result = $query
+  ->entityCondition('entity_type', 'taxonomy_term')
+  ->propertyCondition('vid', $voc->vid)
+  ->fieldCondition('field_taxonomy_dn', 'value', $dns, 'NOT IN', 0)
+  ->execute();
+  foreach (array_keys($result['taxonomy_term']) as $term) {
+    taxonomy_term_delete($term);
+    $count++;
+  }
+  drupal_set_message("Deleted $count obsolete target-groups.");
+}
+
+/**
+ * Provisioning for the user at login
+ */
+function arena_ldap_ldap_user_edit_user_alter(&$edit, &$ldap_user, $ldap_server) {
+  $groups = array();
+  if(isset($ldap_user['attr']['groupmembership']['count']) && $ldap_user['attr']['groupmembership']['count'] > 0) {
+    for($i=0; isset($ldap_user['attr']['groupmembership'][$i]); $i++) {
+      $groups[] = array('value' => $ldap_user['attr']['groupmembership'][$i]);
+    }
+    $edit['field_ldap_grupper'][LANGUAGE_NONE] = $groups;
+  }
+  $affiliation = array();
+  if(isset($ldap_user['attr']['pidedupersonscopedaffiliation']['count']) && $ldap_user['attr']['pidedupersonscopedaffiliation']['count'] > 0) {
+    for($i=0; isset($ldap_user['attr']['pidedupersonscopedaffiliation'][$i]); $i++) {
+      $affiliation[] = array('value' => $ldap_user['attr']['pidedupersonscopedaffiliation'][$i]);
+    }
+    $edit['field_eduaffiliation'][LANGUAGE_NONE] = $affiliation;
+  }
+
+}
+
+

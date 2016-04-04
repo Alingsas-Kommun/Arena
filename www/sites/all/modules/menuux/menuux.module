@@ -1,0 +1,131 @@
+<?php
+
+/**
+ * Implementation of hook_enable
+ */
+function menuux_enable() {
+   db_update('system')
+      ->fields(array(
+        'weight' => 10,
+      ))
+      ->condition('name', 'menuux')
+      ->execute();
+}
+
+/**
+ * Implements hook_form_BASE_FORM_ID_alter().
+ *
+ * Alters how the menu part of node forms behave
+ */
+function menuux_form_node_form_alter(&$form, $form_state) {
+  module_load_include('inc', 'menuux', 'menuux.admin');
+  menuux_node_form_alter($form, $form_state);
+}
+
+/**
+ * Implementation of hook_theme
+ */
+function menuux_theme() {
+  return array(
+    'menuux_node_form' => array(
+      'render element' => 'form',
+      'file' => 'menuux.admin.inc',
+    ),
+    'menuux_menu' => array(
+      'variables' => array('menu' => array()),
+      'file' => 'menuux.admin.inc',
+    )
+  );
+}
+
+/**
+ * Implementation of hook_menu
+ */
+function menuux_menu() {
+  $items = array();
+  /*
+   * We put the ajax callback under node/add to make sure the right theme will be used
+   * In case the site uses an admin theme on the node/add pages...
+   */
+  $items['node/add/menuux_load_menu/%'] = array(
+    'page callback' => 'menuux_load_menu_ajax',
+    'page arguments' => array(3),
+    'type' => MENU_CALLBACK,
+    'file' => 'menuux.admin.inc',
+    'access callback' => 'menuux_access_menu',
+    'access arguments' => array(3),
+  );
+  return $items;
+}
+
+/**
+ * Implementation of hook_nodeapi
+ */
+function menuux_node_validate($node) {
+  if (isset($node->fmenu)) {
+    module_load_include('inc', 'menuux', 'menuux.admin');
+    menuux_node_form_validate($node);
+  }
+}
+
+/**
+ * Implementation of hook_node_update
+ */
+function menuux_node_update($node) {
+  if (isset($node->fmenu)) {
+    module_load_include('inc', 'menuux', 'menuux.admin');
+    menuux_node_form_submit($node);
+  }
+}
+
+/**
+ * Implementation of hook_node_insert
+ */
+function menuux_node_insert($node) {
+  if (isset($node->fmenu)) {
+    module_load_include('inc', 'menuux', 'menuux.admin');
+    menuux_node_form_submit($node);
+  }
+}
+
+/**
+ * Implementation of hook_node_prepare
+ */
+function menuux_node_prepare($node) {
+  if (isset($node->menu)) {
+    $node->fmenu = array();
+    if ($node->menu['mlid'] > 0) {
+      $node->fmenu['menu_name'] = $node->menu['menu_name'];
+      $node->fmenu['mlid'] = $node->menu['mlid'];
+      $node->fmenu['plid'] = $node->menu['plid'];
+      $node->fmenu['weight'] = $node->menu['weight'];
+      $node->fmenu['has_children'] = $node->menu['has_children'];
+      $node->fmenu['link_title'] = $node->menu['link_title'];
+    }
+    else {
+      $node->fmenu['menu_name'] = 0;
+      $node->fmenu['mlid'] = NULL;
+      $node->fmenu['plid'] = 0;
+      $node->fmenu['weight'] = 0;
+      $node->fmenu['has_children'] = 0;
+      $node->fmenu['link_title'] = '';
+    }
+  }
+}
+
+/**
+ * Access callback for ajax menu requests
+ *
+ * @param string $menu_name
+ *  The name of the menu the user is trying to access
+ * @return boolean
+ *  Does the user have access to the menu or not?
+ */
+function menuux_access_menu($menu_name) {
+  if (!user_access('administer menu')) {
+    return FALSE;
+  }
+  module_load_include('inc', 'menuux', 'menuux.admin');
+  $availabe_menus = menuux_available_menus();
+  return isset($availabe_menus[$menu_name]);
+}

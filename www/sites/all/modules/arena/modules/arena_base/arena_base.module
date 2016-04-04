@@ -1,0 +1,7 @@
+<?php
+/**
+ * @file
+ * Code for the Arena Base feature.
+ */
+
+include_once 'arena_base.features.inc';
