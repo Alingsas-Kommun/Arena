@@ -3,7 +3,7 @@ Arena Skolportal
 
 This is a version in beta.
 
-#Installation
+##Installation
 
 1. Setup your Apache/MySQL/PHP Stack and install additionally Drush as
 	 commandline-tool (drush.org).
@@ -13,4 +13,15 @@ This is a version in beta.
 3. Import the database to activate the modules and import some standard content
 	 with $> drush sql-cli ../datadump/arena.sql
 
+The database import adds some standard roles, users and content.
 
+##Logins:
+Administrator         admin/skolportalen
+
+Schooladministrator:  skoladministrator/skoladministrator
+
+Teacher:              lärare/lärare
+
+Student 1:            student1/student1
+
+Student 2:            student2/student2
