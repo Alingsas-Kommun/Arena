@@ -1,0 +1,115 @@
+<?php
+
+/**
+ * @file
+ * TODO: Enter file description here.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function arena_disclaimer_menu() {
+  $items = array();
+  $items['disclaimer/view'] = array(
+    'title' => t('disclaimer'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('arena_disclaimer_view_form'),
+    'access arguments' => array('access content'),
+  );
+  $items['disclaimer/confirm'] = array(
+    'title' => 'myPage',
+    'page callback' => 'arena_disclaimer_confirm',
+    'page arguments' => array(),
+    'access arguments' => array('access content'),
+  );
+  $items['admin/config/system/arena_disclaimer'] = array(
+    'title' => 'Arena Disclaimer',
+    'description' => 'Configure settings for Arena Disclaimer.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('arena_disclaimer_settings_form'),
+    'access arguments' => array('arena administer disclaimer'),
+    'file' => 'arena_disclaimer.admin.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function arena_disclaimer_permission() {
+  $permissions = array();
+  $permissions['arena bypass disclaimer'] = array(
+    'title' => t('Bypass disclaimer confirmation'),
+    'description' => t('Roles that should not require a confirmation of the disclaimer.'),
+  );
+  $permissions['arena administer disclaimer'] = array(
+    'title' => t('Administer disclaimer'),
+    'description' => t('Administer the disclaimer settings.'),
+  );
+
+  return $permissions;
+}
+
+/**
+ * Arena disclaimer confirmation form
+ */
+function arena_disclaimer_view_form($form, &$form_state) {
+  drupal_set_title(variable_get('arena_disclaimer_title', t('Disclaimer')));
+
+  $output = '<h1>'.variable_get('arena_disclaimer_title', t('Disclaimer')).'</h1>';
+  $text = variable_get('arena_disclaimer_text', array('value' => ''));
+  $output .= '<div class="disclaimer content">'.$text['value'].'</div>';
+
+  $form['confirm_disclaimer'] = array(
+    '#prefix' => $output,
+    '#type' => 'checkbox', 
+    '#title' => t('I have read and accept the disclaimer.'),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Send'),
+  );
+
+  return $form;
+}
+
+/**
+ * Arena disclaimer validate confirmation form
+ */
+function arena_disclaimer_view_form_validate($form, &$form_state) {
+  if(empty($form_state['values']['confirm_disclaimer'])) {
+    form_set_error('confirm_disclaimer', t('You have to confirm the disclaimer before using this site.'));
+  }
+}
+
+/**
+ * Arena disclaimer submit confirmation form
+ */
+function arena_disclaimer_view_form_submit($form, &$form_state) {
+  if(!empty($form_state['values']['confirm_disclaimer'])){
+    global $user;
+    $account = user_load($user->uid);
+    if(empty($account->data['arena_disclaimer_confirmed'])) {
+      $edit = array('data' => array('arena_disclaimer_confirmed' => time()));
+      user_save($account, $edit);
+      drupal_set_message(t('Thank you for your confirmation.'));
+    }
+    else {
+     drupal_set_message(t('You have already confirmed the disclaimer at %date', array('%date' => format_date($user->data['arena_disclaimer_confirmed'])))); 
+    }
+  }
+  drupal_goto('start');
+}
+
+/**
+ * Implements hook_page_build()
+ */
+function arena_disclaimer_page_build($page) {
+  global $user;
+  $path = request_path();
+  if($path != 'user/login' && $path != 'user/logout' && $path != 'disclaimer/view' && variable_get('arena_disclaimer_confirm', FALSE) && empty($user->data['arena_disclaimer_confirmed']) && !user_access('arena bypass disclaimer')) {
+    drupal_goto('disclaimer/view');
+  }
+}

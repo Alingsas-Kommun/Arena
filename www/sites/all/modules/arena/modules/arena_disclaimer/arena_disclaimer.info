@@ -1,0 +1,6 @@
+name = Arena Disclaimer
+description = Show a disclaimer for every new user
+core = 7.x
+
+files[] = tests/arena_disclaimer.test
+configure = admin/config/arena/arena_disclaimer

@@ -1,0 +1,41 @@
+<?php
+
+/**
+ * @file
+ * Contains tests for the Arena Disclaimer module.
+ */
+
+/**
+ * Test case.
+ */
+class ArenaDisclaimerTestCase extends DrupalWebTestCase {
+
+  /**
+   * Implements getInfo().
+   */
+  public static function getInfo() {
+    return array(
+      'name' => t('Arena Disclaimer tests'),
+      'description' => t('TODO: write me.'),
+      'group' => t('Arena Disclaimer'),
+    );
+  }
+
+  /**
+   * Implements setUp().
+   */
+  function setUp() {
+    // Call the parent with an array of modules to enable for the test.
+    parent::setUp(array('arena_disclaimer'));
+
+    // TODO: perform additional setup tasks here if required.
+  }
+
+  /**
+   * Test the module's functionality.
+   */
+  function testTodoChangeThisName() {
+    // TODO: write test!
+  }
+
+}
